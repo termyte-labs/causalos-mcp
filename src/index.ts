@@ -11,7 +11,7 @@ import { startSweeper } from "./sweeper.js";
 
 // ─── Server ───────────────────────────────────────────────────────────────────
 const server = new McpServer({
-  name: "causalos-mcp",
+  name: "causal-os",
   version: "2.0.0",
 });
 

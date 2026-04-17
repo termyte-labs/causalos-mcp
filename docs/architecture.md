@@ -90,3 +90,8 @@ table causal_events (
 - **Rule 2:** Idempotency via `anchor_id`.
 - **Rule 3:** Inference over blocking forever.
 - **Rule 4:** `context_build` can override default adaptive TTL.
+
+---
+
+[← Agent Integration](agent-integration.md) | [Privacy →](privacy.md)
+

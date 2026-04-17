@@ -57,7 +57,7 @@ Task → context_build → Agent → Action → causal_record → Future Improve
 ## Installation
 
 ```bash
-npx causalos-mcp
+npx causal-os
 ```
 
 All data is stored locally at `~/.causalos/memory.db`. No backend required.
@@ -90,7 +90,7 @@ Your goal is not just to complete the task — it is to improve based on past ou
   "mcpServers": {
     "causalos": {
       "command": "npx",
-      "args": ["-y", "causalos-mcp"]
+      "args": ["-y", "causal-os"]
     }
   }
 }
