@@ -24,7 +24,7 @@ async function callBackend(endpoint: string, method: string, body?: any) {
     }
 
     const response = await fetch(`${CAUSALOS_BASE_URL}${endpoint}`, options);
-
+    
     if (!response.ok) {
       throw new Error(`Backend error: ${response.statusText}`);
     }
