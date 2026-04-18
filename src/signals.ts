@@ -15,7 +15,7 @@ export interface EvaluationResult {
 }
 
 export function evaluateSignals(signals: SignalsRecord): EvaluationResult {
-  const { system, user, agent } = signals;
+  const { system, user, agent, logs } = signals;
 
   // Human override — absolute highest authority
   if (user === "negative") {
@@ -23,6 +23,16 @@ export function evaluateSignals(signals: SignalsRecord): EvaluationResult {
       final_label: "FAILURE",
       confidence: 1.0,
       reason: "User explicitly corrected or interrupted the action.",
+    };
+  }
+
+  // Log analysis (Advanced Signal)
+  const logPatterns = logs ? extractErrorPatterns(logs) : null;
+  if (logPatterns) {
+    return {
+      final_label: "FAILURE",
+      confidence: 0.9,
+      reason: `Log analysis detected critical patterns: ${logPatterns}`,
     };
   }
 
@@ -76,4 +86,30 @@ export function evaluateSignals(signals: SignalsRecord): EvaluationResult {
     confidence: 0.2,
     reason: "No reliable signals available; defaulting to FAILURE for safety.",
   };
+}
+
+/**
+ * Extracts error patterns from execution logs (stdout/stderr).
+ */
+export function extractErrorPatterns(logs: string | null | undefined): string | null {
+  if (!logs) return null;
+  const commonErrors = [
+    /TypeError: .*/i,
+    /SyntaxError: .*/i,
+    /ReferenceError: .*/i,
+    /\[ERR_[A-Z0-9_]+\]/i,
+    /Error: (?!.*success).*/i,
+    /Exception in thread .*/i,
+    /panic: .*/i,
+    /Permission denied/i,
+    /Command not found/i,
+    /Cannot find module .*/i,
+  ];
+
+  const matches = commonErrors
+    .map((re) => logs.match(re))
+    .filter((m) => m !== null)
+    .map((m) => m![0]);
+
+  return matches.length > 0 ? matches.join("; ") : null;
 }

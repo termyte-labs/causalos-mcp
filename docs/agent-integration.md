@@ -11,12 +11,12 @@ Add this to your agent's system prompt (or custom instructions) to enable the Ca
 
 Before solving ANY task, you MUST follow this strict protocol to leverage your causal memory:
 
-1. **Bootstrap**: ALWAYS call `context_build` with the specific task description first.
+1. **Bootstrap**: ALWAYS call `context_build` with the specific task description first. Pass `project_name` (e.g., the folder or repo name) to enable project-specific memory boosting.
 2. **Internalize**: Immediately incorporate the returned `instruction_patch` into your reasoning. This patch contains hard constraints and proven patterns from past runs.
 3. **Guard**: Before executing any risky action (database writes/deletes, shell commands, file modifications, or API calls), call `causal_check`.
 4. **Adapt**: For high-stakes operations, call `causal_adapt` to get a safer or modified version of your planned action.
 5. **Acknowledge**: If you modify your initial plan because of memory, you MUST start your response to the user with: "⚠️ **CausalOS Intervention:** Modified plan to prevent past failure."
-6. **Learn**: After execution, call `causal_record`. You MUST provide available system signals (system_exit_code) to ensure accurate learning.
+6. **Learn**: After execution, call `causal_record`. You MUST provide available system signals (`system_exit_code`) and raw `logs` (terminal output) to ensure accurate learning.
 
 Your objective is to become measurably more reliable over time by leveraging this local causal engine.
 ```
@@ -46,6 +46,14 @@ If you skip recording, the system cannot learn. Even if you "fail", recording th
 
 ### 3. Respond to `risk_score`
 If `causal_check` returns a high risk score (> 0.7), you should explain the risk to the user and suggest an alternative *before* acting.
+
+### 4. Continuous Log Capture
+Professional integrations should pipe the output of every critical shell command into the `logs` field of `causal_record`. This allows CausalOS to detect:
+- `TypeError` or `SyntaxError` in scripts.
+- `Permission denied` or `Command not found` in environments.
+- `panic` or stack traces in backend logs.
+
+By capturing raw logs, CausalOS can objectively identify a failure even if the agent is biased or the system exit code is misleading.
 
 ---
 

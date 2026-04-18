@@ -18,16 +18,17 @@
 *   **Assumption - Signal Capture:** The V1 system must infer user signals from temporal behavior rather than relying on explicit hooks, since user signals are notoriously unreliable to capture manually.
 *   **Assumption - Prompt Compliance:** Agent builders may not flawlessly integrate instructions. Therefore, `context_build` must provide overwhelming value even if partially used.
 *   **Risk - Timeouts/Crashes:** In-memory sessions are volatile. Addressed via SQLite DB-backed state.
-*   **Risk - False Positives in Inference:** Handled by a strict signal weighting hierarchy (Human > System > Agent).
+*   **Risk - False Positives in Inference:** Handled by a strict signal weighting hierarchy (Human > Log > System > Agent).
+*   **Risk - Context Dilution:** Project boosting ensures local repo memory isn't "drowned out" by global patterns.
 
 ## 3. Decision Log
 
 | Decision Area | Selected Option | Rationale / Trade-offs |
 | :--- | :--- | :--- |
 | **Go-To-Market Focus** | **Developers (Primary) + Local End Users (Secondary)** | Builders validate the architecture and integration, while local users drive rapid adoption and validate the product value. Enterprise is excluded for V1 due to long sales cycles and trust barriers. |
-| **Data & Architecture** | **Local-First Default + Optional Cloud** | Local default (`~/.causalos/memory.db`) ensures zero-latency, full privacy, and trust. Cloud acts purely as an opt-in intelligence amplifier (better patterns, pro features) but is never blocking. |
-| **Success Evaluation** | **Hybrid Model (Weighted)** | Trust the human most (1.0), the system next (0.8), and the agent last (0.5). Relying on a single signal causes noisy or hallucinated learning loops. |
-| **Execution Tracking** | **Soft-State Temporal Anchor + Event Log** | Pure in-memory state is fragile (crashes lose context). DB-backed anchors allow robust inference of user interruptions without explicit webhooks. |
+| **Data & Architecture** | **Local-First Default + Optional Cloud** | Local default ensures zero-latency, full privacy, and trust. Cloud acts purely as an opt-in intelligence amplifier but is never blocking. |
+| **Success Evaluation** | **Hybrid Model (Weighted)** | Trust the human most (1.0). Followed by Log diagnostics (0.9) which objectively extract failure patterns. Then system exit codes (0.8) and agent reports (0.5). |
+| **Project Intelligence** | **Project-Aware Boosting** | Memory is segmented by `project_name`. Matches within the current project receive a search boost to prioritize repo-specific constraints. |
 
 ## 4. Final Design: Soft-State Temporal Anchor + Idempotent Events
 
@@ -51,7 +52,7 @@ table anchors (
 table events (
   event_id TEXT PRIMARY KEY,
   anchor_id TEXT,
-  type TEXT,            -- CONTEXT_BUILT | CHECK | RECORD | NEW_TASK | TIMEOUT
+  type TEXT,            -- CONTEXT_BUILT | CHECK | RECORD | NEW_TASK | TIMEOUT | ADAPTATION
   payload JSON,
   created_at INTEGER
 );
@@ -59,13 +60,20 @@ table events (
 table causal_events (
   id TEXT PRIMARY KEY,
   anchor_id TEXT,
+  session_id TEXT,
+  task TEXT,
   action TEXT,
   outcome TEXT,
-  signals JSON,         -- {system, user, agent}
+  pattern TEXT,
+  signals JSON,         -- {system, user, agent, logs}
   final_label TEXT,
   confidence REAL,
+  project_name TEXT,    -- Added in V1.1
+  working_dir TEXT,     -- Added in V1.1
+  logs TEXT,            -- Added in V1.1
   created_at INTEGER
 );
+create index idx_project on causal_events(project_name);
 ```
 
 ### Runtime Flow

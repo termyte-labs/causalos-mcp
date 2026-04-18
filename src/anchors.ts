@@ -110,6 +110,8 @@ export interface RecordInput {
   outcome?: string | null;
   pattern?: string | null;
   signals: SignalsRecord;
+  project_name?: string | null;
+  working_dir?: string | null;
 }
 
 export function recordAndResolve(input: RecordInput): {
@@ -138,6 +140,8 @@ export function recordAndResolve(input: RecordInput): {
     signals: input.signals,
     final_label: evaluation.final_label,
     confidence: evaluation.confidence,
+    project_name: input.project_name ?? null,
+    working_dir: input.working_dir ?? null,
   });
 
   return {

@@ -37,6 +37,9 @@ export interface CausalEvent {
   signals: string;
   final_label: FinalLabel;
   confidence: number;
+  project_name: string | null;
+  working_dir: string | null;
+  logs: string | null;
   created_at: number;
 }
 
@@ -44,6 +47,7 @@ export type SignalsRecord = {
   system: "SUCCESS" | "FAILURE" | null;
   user: "negative" | null;
   agent: "success" | "failure" | null;
+  logs?: string | null;
 };
 
 // Use a typed alias for the sql.js Database instance
@@ -99,17 +103,20 @@ function createSchema() {
     );
 
     CREATE TABLE IF NOT EXISTS causal_events (
-      id          TEXT PRIMARY KEY,
-      anchor_id   TEXT NOT NULL,
-      session_id  TEXT NOT NULL,
-      task        TEXT NOT NULL,
-      action      TEXT NOT NULL,
-      outcome     TEXT,
-      pattern     TEXT,
-      signals     TEXT NOT NULL,
-      final_label TEXT NOT NULL,
-      confidence  REAL NOT NULL,
-      created_at  INTEGER NOT NULL
+      id           TEXT PRIMARY KEY,
+      anchor_id    TEXT NOT NULL,
+      session_id   TEXT NOT NULL,
+      task         TEXT NOT NULL,
+      action       TEXT NOT NULL,
+      outcome      TEXT,
+      pattern      TEXT,
+      signals      TEXT NOT NULL,
+      final_label  TEXT NOT NULL,
+      confidence   REAL NOT NULL,
+      project_name TEXT,
+      working_dir  TEXT,
+      logs         TEXT,
+      created_at   INTEGER NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_anchors_session ON anchors(session_id);
@@ -118,7 +125,22 @@ function createSchema() {
     CREATE INDEX IF NOT EXISTS idx_causal_task ON causal_events(task);
     CREATE INDEX IF NOT EXISTS idx_causal_label ON causal_events(final_label);
     CREATE INDEX IF NOT EXISTS idx_causal_session ON causal_events(session_id);
+    CREATE INDEX IF NOT EXISTS idx_causal_project ON causal_events(project_name);
   `);
+
+  // Migration: Add new columns if they exist (simple check)
+  const columns = queryAll<{name: string}>("PRAGMA table_info(causal_events)");
+  const colNames = columns.map(c => c.name);
+  if (!colNames.includes("project_name")) {
+    getDb().run("ALTER TABLE causal_events ADD COLUMN project_name TEXT");
+  }
+  if (!colNames.includes("working_dir")) {
+    getDb().run("ALTER TABLE causal_events ADD COLUMN working_dir TEXT");
+  }
+  if (!colNames.includes("logs")) {
+    getDb().run("ALTER TABLE causal_events ADD COLUMN logs TEXT");
+  }
+
   persist();
   seedInitialHeuristics();
 }
@@ -142,12 +164,12 @@ function seedInitialHeuristics() {
 
   for (const h of heuristics) {
     run(
-      `INSERT INTO causal_events (id, anchor_id, session_id, task, action, outcome, pattern, signals, final_label, confidence, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO causal_events (id, anchor_id, session_id, task, action, outcome, pattern, signals, final_label, confidence, project_name, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         h.id, "seed-anchor", "system-seed", h.task, h.action, h.outcome, h.pattern,
         JSON.stringify({system: "FAILURE", user: "negative", agent: null}),
-        h.final_label, 0.9, Date.now()
+        h.final_label, 0.9, "system-heuristics", Date.now()
       ]
     );
   }
@@ -226,15 +248,20 @@ export function insertCausalEvent(ev: {
   signals: SignalsRecord;
   final_label: FinalLabel;
   confidence: number;
+  project_name?: string | null;
+  working_dir?: string | null;
 }): void {
   run(
-    `INSERT INTO causal_events (id, anchor_id, session_id, task, action, outcome, pattern, signals, final_label, confidence, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO causal_events (id, anchor_id, session_id, task, action, outcome, pattern, signals, final_label, confidence, project_name, working_dir, logs, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       ev.id, ev.anchor_id, ev.session_id, ev.task, ev.action,
       ev.outcome ?? null, ev.pattern ?? null,
       JSON.stringify(ev.signals),
-      ev.final_label, ev.confidence, Date.now(),
+      ev.final_label, ev.confidence,
+      ev.project_name ?? null, ev.working_dir ?? null,
+      ev.signals.logs ?? null,
+      Date.now(),
     ]
   );
 }
@@ -259,13 +286,22 @@ function extractTokens(query: string): string[] {
 
 /**
  * Builds a dynamic SQL WHERE clause that ORs individual token LIKE conditions.
- * This ensures "delete users from database" matches "delete users from THE database".
+ * Now includes project-based prioritization.
  */
-function buildTokenLikeClause(tokens: string[], params: (string | number | null)[], labelFilter?: "FAILURE" | "SUCCESS"): string {
+function buildTokenLikeClause(
+  tokens: string[],
+  params: (string | number | null)[],
+  labelFilter?: "FAILURE" | "SUCCESS",
+  projectName?: string
+): string {
+  let labelClause = labelFilter ? `final_label = '${labelFilter}' AND ` : "";
+  
+  // If we have a project name, we want to prioritize it. 
+  // We'll return everything matching tokens, but sort by project match later.
+  
   if (tokens.length === 0) {
-    const labelClause = labelFilter ? `final_label = '${labelFilter}' AND ` : "";
-    params.push(50);
-    return `${labelClause}1=1 ORDER BY confidence DESC, created_at DESC LIMIT ?`;
+    params.push(100);
+    return `${labelClause}1=1 ORDER BY ${projectName ? `(project_name = '${projectName}') DESC, ` : ""}confidence DESC, created_at DESC LIMIT ?`;
   }
 
   const tokenConditions: string[] = [];
@@ -275,15 +311,14 @@ function buildTokenLikeClause(tokens: string[], params: (string | number | null)
     tokenConditions.push(`(task LIKE ? OR action LIKE ?)`);
   }
 
-  const labelClause = labelFilter ? `final_label = '${labelFilter}' AND ` : "";
-  params.push(50);
-  return `${labelClause}(${tokenConditions.join(" OR ")}) ORDER BY confidence DESC, created_at DESC LIMIT ?`;
+  params.push(100);
+  return `${labelClause}(${tokenConditions.join(" OR ")}) ORDER BY ${projectName ? `(project_name = '${projectName}') DESC, ` : ""}confidence DESC, created_at DESC LIMIT ?`;
 }
 
-export function querySimilarEvents(query: string, limit = 30): CausalEvent[] {
+export function querySimilarEvents(query: string, limit = 30, projectName?: string): CausalEvent[] {
   const tokens = extractTokens(query);
   const params: (string | number | null)[] = [];
-  const where = buildTokenLikeClause(tokens, params);
+  const where = buildTokenLikeClause(tokens, params, undefined, projectName);
   const results = queryAll<CausalEvent>(
     `SELECT * FROM causal_events WHERE ${where}`,
     params
@@ -291,10 +326,10 @@ export function querySimilarEvents(query: string, limit = 30): CausalEvent[] {
   return results.slice(0, limit);
 }
 
-export function querySimilarFailures(query: string, limit = 20): CausalEvent[] {
+export function querySimilarFailures(query: string, limit = 20, projectName?: string): CausalEvent[] {
   const tokens = extractTokens(query);
   const params: (string | number | null)[] = [];
-  const where = buildTokenLikeClause(tokens, params, "FAILURE");
+  const where = buildTokenLikeClause(tokens, params, "FAILURE", projectName);
   const results = queryAll<CausalEvent>(
     `SELECT * FROM causal_events WHERE ${where}`,
     params
@@ -302,10 +337,10 @@ export function querySimilarFailures(query: string, limit = 20): CausalEvent[] {
   return results.slice(0, limit);
 }
 
-export function querySimilarSuccesses(query: string, limit = 10): CausalEvent[] {
+export function querySimilarSuccesses(query: string, limit = 10, projectName?: string): CausalEvent[] {
   const tokens = extractTokens(query);
   const params: (string | number | null)[] = [];
-  const where = buildTokenLikeClause(tokens, params, "SUCCESS");
+  const where = buildTokenLikeClause(tokens, params, "SUCCESS", projectName);
   const results = queryAll<CausalEvent>(
     `SELECT * FROM causal_events WHERE ${where}`,
     params
@@ -314,7 +349,7 @@ export function querySimilarSuccesses(query: string, limit = 10): CausalEvent[] 
 }
 
 export function getAllCausalEvents(): CausalEvent[] {
-  return queryAll<CausalEvent>(`SELECT * FROM causal_events ORDER BY created_at DESC LIMIT 200`);
+  return queryAll<CausalEvent>(`SELECT * FROM causal_events ORDER BY created_at DESC LIMIT 500`);
 }
 
 export function getRecentCausalEvents(limit: number): CausalEvent[] {

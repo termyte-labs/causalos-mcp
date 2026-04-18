@@ -55,8 +55,9 @@ function recencyScore(created_at: number): number {
 }
 
 // ─── Failure Score (composite ranking) ───────────────────────────────────────
-function scoreFailure(ev: CausalEvent, signals: ReturnType<typeof parseSignals>, frequency: number): number {
+function scoreFailure(ev: CausalEvent, signals: ReturnType<typeof parseSignals>, frequency: number, currentProject?: string): number {
   const userBoost   = signals.user === "negative" ? 1.0 : 0.0;
+  const projectBoost = (currentProject && ev.project_name === currentProject) ? 0.3 : 0.0;
   const confidence  = ev.confidence;
   const repetition  = Math.min(frequency / 5, 1.0); // normalize to [0,1] at 5 occurrences
   const recency     = recencyScore(ev.created_at);
@@ -65,16 +66,18 @@ function scoreFailure(ev: CausalEvent, signals: ReturnType<typeof parseSignals>,
     WEIGHT_USER_SIGNAL * userBoost +
     WEIGHT_CONFIDENCE  * confidence +
     WEIGHT_REPETITION  * repetition +
-    WEIGHT_RECENCY     * recency
+    WEIGHT_RECENCY     * recency +
+    projectBoost
   );
 }
 
 // ─── Success Reinforcement (how strongly to promote a pattern) ────────────────
-function reinforcementScore(ev: CausalEvent, repeatCount: number): number {
+function reinforcementScore(ev: CausalEvent, repeatCount: number, currentProject?: string): number {
   const baseConfidence = ev.confidence;
+  const projectBoost = (currentProject && ev.project_name === currentProject) ? 0.15 : 0.0;
   // Exponential reinforcement: each confirmed repeat multiplies trust
   const repetitionBoost = 1 - Math.exp(-repeatCount / 3); // saturates at ~3 repeats
-  return Math.min(baseConfidence + repetitionBoost * 0.3, 1.0);
+  return Math.min(baseConfidence + repetitionBoost * 0.3 + projectBoost, 1.0);
 }
 
 // ─── Parse Signals ────────────────────────────────────────────────────────────
@@ -95,16 +98,16 @@ function parseSignals(raw: string): { system: string | null; user: string | null
  *
  * This ensures: user-corrected mistakes surface FIRST, not just the most recent ones.
  */
-export function buildContext(task: string, action_type?: string): ContextResult {
+export function buildContext(task: string, action_type?: string, projectName?: string): ContextResult {
   const query = action_type ? `${task} ${action_type}` : task;
 
   const MIN_SIMILARITY = 0.05; // Discard results with near-zero token overlap
 
-  const failures  = querySimilarFailures(query, 20)
+  const failures  = querySimilarFailures(query, 20, projectName)
     .filter(ev => taskSimilarity(ev.task + " " + ev.action, query) >= MIN_SIMILARITY);
-  const successes = querySimilarSuccesses(query, 10)
+  const successes = querySimilarSuccesses(query, 10, projectName)
     .filter(ev => taskSimilarity(ev.task + " " + ev.action, query) >= MIN_SIMILARITY);
-  const related   = querySimilarEvents(query, 30)
+  const related   = querySimilarEvents(query, 30, projectName)
     .filter(ev => taskSimilarity(ev.task + " " + ev.action, query) >= MIN_SIMILARITY);
 
   // ── Frequency maps for repetition scoring ──
@@ -128,7 +131,7 @@ export function buildContext(task: string, action_type?: string): ContextResult 
     .map((ev) => {
       const signals   = parseSignals(ev.signals);
       const frequency = failureTaskCounts.get(ev.task.substring(0, 100)) ?? 1;
-      const score     = scoreFailure(ev, signals, frequency);
+      const score     = scoreFailure(ev, signals, frequency, projectName);
       return { ev, signals, frequency, score };
     })
     .sort((a, b) => b.score - a.score)
@@ -138,7 +141,7 @@ export function buildContext(task: string, action_type?: string): ContextResult 
   const scoredSuccesses = successes
     .map((ev) => {
       const repeatCount   = ev.pattern ? (successPatternCounts.get(ev.pattern) ?? 1) : 1;
-      const reinforcement = reinforcementScore(ev, repeatCount);
+      const reinforcement = reinforcementScore(ev, repeatCount, projectName);
       return { ev, reinforcement };
     })
     .sort((a, b) => b.reinforcement - a.reinforcement)
@@ -288,15 +291,16 @@ function buildDirectiveInstructionPatch(
  */
 export function adaptAction(
   planned_action: string,
-  task: string
+  task: string,
+  projectName?: string
 ): {
   modified_action: string;
   reason: string;
   confidence: number;
   changes_made: boolean;
 } {
-  const failures  = querySimilarFailures(planned_action, 10);
-  const successes = querySimilarSuccesses(planned_action, 5);
+  const failures  = querySimilarFailures(planned_action, 10, projectName);
+  const successes = querySimilarSuccesses(planned_action, 5, projectName);
 
   if (failures.length === 0) {
     return {
@@ -311,7 +315,7 @@ export function adaptAction(
   const scored = failures
     .map((ev) => {
       const signals = parseSignals(ev.signals);
-      const score   = scoreFailure(ev, signals, 1);
+      const score   = scoreFailure(ev, signals, 1, projectName);
       return { ev, signals, score };
     })
     .sort((a, b) => b.score - a.score);

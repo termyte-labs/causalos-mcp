@@ -24,13 +24,15 @@ server.registerTool(
     inputSchema: z.object({
       task: z.string().describe("What the agent is trying to do (be specific)"),
       session_id: z.string().optional().describe("Session identifier — use a consistent ID per conversation/run"),
+      project_name: z.string().optional().describe("The name of the current project/repo (for project-specific memory)"),
       action_type: z.string().optional().describe("Hint about the type of action: DB_DELETE, SHELL, FILE_WRITE, API_CALL, etc."),
       environment: z.string().optional().describe("Optional: relevant environment context"),
       ttl_sec: z.number().optional().describe("Seconds before this task anchor auto-expires (default: 120)"),
     }),
   },
-  async ({ task, session_id, action_type, environment: _env, ttl_sec }) => {
+  async ({ task, session_id, project_name, action_type, environment: _env, ttl_sec }) => {
     const sid = session_id ?? "default";
+    const projectName = project_name ?? "default_project";
 
     // INFERENCE TRIGGER: If a previous task was never resolved, infer failure
     // Passes new task so confidence is adaptive (similar+quick = 0.9, different+delayed = 0.5)
@@ -40,7 +42,7 @@ server.registerTool(
     const anchor_id = createAnchor(sid, task, ttl_sec ?? 120);
 
     // Query causal memory for relevant context
-    const ctx = buildContext(task, action_type);
+    const ctx = buildContext(task, action_type, projectName);
 
     return {
       content: [
@@ -85,16 +87,17 @@ server.registerTool(
         .enum(["DB_DELETE", "DB_WRITE", "FILE_DELETE", "FILE_WRITE", "SHELL", "API_CALL", "NETWORK", "OTHER"])
         .describe("The type of action"),
       anchor_id: z.string().optional().describe("The anchor_id from context_build (recommended)"),
+      project_name: z.string().optional().describe("The name of the current project/repo"),
       context: z.string().optional().describe("Any additional context about the current environment"),
     }),
   },
-  async ({ action, action_type, anchor_id, context: _ctx }) => {
+  async ({ action, action_type, anchor_id, project_name, context: _ctx }) => {
     const query = `${action} ${action_type}`;
-    const similar = querySimilarEvents(query, 8);
+    const similar = querySimilarEvents(query, 8, project_name);
 
     // Log check event against anchor
     if (anchor_id) {
-      insertEvent(randomUUID(), anchor_id, "CHECK", { action, action_type });
+      insertEvent(randomUUID(), anchor_id, "CHECK", { action, action_type, project_name });
     }
 
     const failures = similar.filter((e) => e.final_label === "FAILURE");
@@ -194,13 +197,16 @@ server.registerTool(
       action: z.string().describe("What was actually executed"),
       outcome: z.string().optional().describe("Description of what happened"),
       pattern: z.string().optional().describe("A short label describing what succeeded or failed (e.g. 'safe_delete_with_where')"),
+      logs: z.string().optional().describe("Execution logs/output (raw output from terminal/API) for pattern analysis"),
+      project_name: z.string().optional().describe("The name of the current project/repo"),
+      working_dir: z.string().optional().describe("The working directory where the action was executed"),
       // Hybrid signal inputs
       success: z.boolean().optional().describe("Agent's self-assessment of success"),
       system_exit_code: z.number().optional().describe("Exit code from system (0 = success, non-zero = failure)"),
       user_interrupted: z.boolean().optional().describe("True if the user explicitly corrected, interrupted, or rolled back this action"),
     }),
   },
-  async ({ anchor_id, session_id, task, action, outcome, pattern, success, system_exit_code, user_interrupted }) => {
+  async ({ anchor_id, session_id, task, action, outcome, pattern, logs, project_name, working_dir, success, system_exit_code, user_interrupted }) => {
     const sid = session_id ?? "default";
 
     const signals = {
@@ -217,6 +223,7 @@ server.registerTool(
             ? ("success" as const)
             : ("failure" as const)
           : null,
+      logs: logs ?? null,
     };
 
     const result = recordAndResolve({
@@ -227,6 +234,8 @@ server.registerTool(
       outcome: outcome ?? null,
       pattern: pattern ?? null,
       signals,
+      project_name: project_name ?? null, 
+      working_dir: working_dir ?? null
     });
 
     return {
@@ -261,14 +270,15 @@ server.registerTool(
       planned_action: z.string().describe("The action you plan to take"),
       task: z.string().describe("The overall task this action is part of"),
       anchor_id: z.string().optional().describe("The anchor_id from context_build"),
+      project_name: z.string().optional().describe("The name of the current project/repo"),
     }),
   },
-  async ({ planned_action, task, anchor_id }) => {
+  async ({ planned_action, task, anchor_id, project_name }) => {
     if (anchor_id) {
-      insertEvent(randomUUID(), anchor_id, "ADAPTATION", { planned_action, task });
+      insertEvent(randomUUID(), anchor_id, "ADAPTATION", { planned_action, task, project_name });
     }
 
-    const result = adaptAction(planned_action, task);
+    const result = adaptAction(planned_action, task, project_name);
 
     return {
       content: [

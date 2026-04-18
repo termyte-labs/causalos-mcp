@@ -9,8 +9,9 @@ Retrieves relevant past experience and provides an instruction patch.
 - **Inputs**:
     - `task`: (string, required) Specific description of current task.
     - `session_id`: (string, optional) Unique ID for the conversation.
+    - `project_name`: (string, optional) Local repo or project name (enables project-boosting).
     - `action_type`: (string, optional) Hint about type (e.g., `DB_WRITE`).
-- **Output**: Returns an `anchor_id` and an `instruction_patch`.
+- **Output**: Returns an `anchor_id`, `context` (past facts), and an `instruction_patch`.
 
 ## 2. `causal_check` (Recommended)
 **Call before risky actions.**
@@ -20,6 +21,7 @@ Checks for specific failure patterns and returns a risk score.
     - `action`: (string, required) Exact action planned.
     - `action_type`: (enum, required) e.g., `SHELL`, `FILE_WRITE`.
     - `anchor_id`: (string, recommended) Id from `context_build`.
+    - `project_name`: (string, optional) Contextual repository name.
 - **Output**: Returns `risk_score`, `pattern` detected, and `suggested_fix`.
 
 ## 3. `causal_record` (Required)
@@ -30,6 +32,9 @@ Closes the loop by recording what actually happened.
     - `anchor_id`: (string, required)
     - `task`: (string, required)
     - `action`: (string, required)
+    - `logs`: (string, optional) **Terminal output for autonomous failure analysis.**
+    - `project_name`: (string, optional)
+    - `working_dir`: (string, optional)
     - `success`: (boolean, optional) Agent's assessment.
     - `system_exit_code`: (number, optional) OS feedback.
     - `user_interrupted`: (boolean, optional) Proxy for manual correction.
@@ -41,7 +46,8 @@ Returns a safer "patched" version of a command or code snippet.
 - **Inputs**:
     - `planned_action`: (string, required)
     - `task`: (string, required)
-- **Output**: Returns `modified_action` and `reason`.
+    - `project_name`: (string, optional)
+- **Output**: Returns `modified_action`, `reason`, and `confidence`.
 
 ## 5. `causal_history`
 **Audit and debug.**
