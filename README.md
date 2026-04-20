@@ -18,7 +18,7 @@ V2 introduces a clear separation between implementation and governance:
 ## ✨ Key Features in V2
 
 - **2-Phase Commit (2PC) Protocol**: Mandatory `Prepare -> Simulate -> Commit` loop for all critical tools.
-- **Binary Causal Ledger**: High-speed, cryptographically linked trajectory storage (replaces legacy SQLite).
+- **Binary Causal Ledger**: High-speed, cryptographically linked trajectory storage.
 - **Plan Contracts**: Deterministic safety requirements injected into agent context via `contract_hash`.
 - **Hard Safety Gates**: Physical blocking of high-risk tool calls with historical failure density > 0.8.
 - **Institutional Observability**: OpenTelemetry integration for tracing governance decisions.
