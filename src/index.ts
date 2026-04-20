@@ -184,7 +184,8 @@ server.registerTool(
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("CausalOS MCP v2.0 running — gRPC Bridge engaged to Kernel (port 50051)");
+  const host = process.env.CAUSAL_RUNTIME_HOST || 'localhost:50051';
+  console.error(`CausalOS MCP v2.0 running — gRPC Bridge engaged to Kernel at ${host}`);
 }
 
 main().catch((error) => {

@@ -18,7 +18,7 @@ const kernelNamespace = causalosProto.causalos.kernel;
 export class KernelClient {
   private client: any;
 
-  constructor(address = 'localhost:50051') {
+  constructor(address = process.env.CAUSAL_RUNTIME_HOST || 'localhost:50051') {
     this.client = new kernelNamespace.KernelService(
       address,
       grpc.credentials.createInsecure()
