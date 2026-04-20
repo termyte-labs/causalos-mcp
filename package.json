@@ -1,6 +1,6 @@
 {
   "name": "causalos-mcp",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Deterministic Governance & Causal Memory Kernel for AI Agents — Split-Plane Architecture",
   "main": "dist/index.js",
   "bin": {
