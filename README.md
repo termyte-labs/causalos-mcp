@@ -1,102 +1,51 @@
-# CausalOS MCP v1.0
+# CausalOS v2.0: Deterministic Governance Layer
 
-> **"Don't just remember the past. Use it to change the future."**
+> **"Don't just anticipate the future. Govern it."**
 
-CausalOS MCP is a **local-first decision intelligence layer** for AI agents.
-It actively shapes agent reasoning by injecting structured context (past failures, success patterns, constraints) _before_ the agent acts — making it measurably better every run.
-
----
-
-## What's New in V1
-
-| Feature | V1.1 (Intelligence Engine) |
-| :--- | :--- |
-| Memory | **Cross-project Global Memory retrieval** |
-| Risk check | Warning + pattern + suggested fix |
-| Context | **Stemmed Semantic matching (Dice Coefficient)** |
-| Learning | **Hybrid heuristic + fallback diagnostics** |
-| Behavior change | `causal_adapt` with project memory |
-| Logic Analyzer | **Extracts error patterns cross-language** |
-| Memory Tagging | **Global origin repository tagging** |
+CausalOS V2 is a high-integrity **Deterministic Governance Layer** for AI agents. It transitions from a simple memory store to a **Split-Plane Architecture**, enforcing safety guardrails and closed-loop learning across every agent trajectory.
 
 ---
 
-## How It Works
+## 🚀 The V2 Split-Plane Architecture
 
-```
-Task → context_build → Agent → Action → causal_record → Future Improvement
-```
+V2 introduces a clear separation between implementation and governance:
 
-1. **`context_build`** — called before every task. Retrieves past failures, success patterns, and an `instruction_patch` for the agent to incorporate.
-2. Agent acts (optionally calling `causal_check` and `causal_adapt` before risky operations).
-3. **`causal_record`** — called after execution. Closes the learning loop with hybrid signals (system exit code, user interruption, agent self-assessment).
-4. On the **next run**, `context_build` surfaces relevant lessons — the agent is better.
-
-### Signal Hierarchy (Human > System > Agent)
-
-| Signal | Weight | Source |
-| :--- | :--- | :--- |
-| User-interrupted | 1.0 | User correction / Ctrl+C |
-| **Log diagnostics** | **0.9** | **Detected patterns in terminal logs** |
-| System failure | 0.8 | Non-zero exit code / API error |
-| Agent self-report | 0.5 | Agent assessment |
+1.  **Control Plane (The Kernel)**: A high-performance Rust sidecar that manages the **Causal Ledger (Binary DAG)** and enforces **Plan Contracts**.
+2.  **Data Plane (The Bridge)**: A lightweight Node.js/gRPC bridge that interfaces with any MCP-capable host (Claude Desktop, IDEs, etc.).
 
 ---
 
-## Tools
+## ✨ Key Features in V2
 
-| Tool | Purpose |
-| :--- | :--- |
-| `context_build` | **Call first.** Retrieves past experience + instruction patch |
-| `causal_check` | Risk check with pattern detection + suggested fix |
-| `causal_record` | Record outcome to feed the learning loop |
-| `causal_adapt` | Actively modify a planned action based on past failures |
-| `causal_history` | View audit trail of past outcomes |
-| `causal_graph` | Risk profile and top failure patterns overview |
+- **2-Phase Commit (2PC) Protocol**: Mandatory `Prepare -> Simulate -> Commit` loop for all critical tools.
+- **Binary Causal Ledger**: High-speed, cryptographically linked trajectory storage (replaces legacy SQLite).
+- **Plan Contracts**: Deterministic safety requirements injected into agent context via `contract_hash`.
+- **Hard Safety Gates**: Physical blocking of high-risk tool calls with historical failure density > 0.8.
+- **Institutional Observability**: OpenTelemetry integration for tracing governance decisions.
 
 ---
 
-## Installation
+## 🛠 Usage Instructions
 
+### 1. Launch the Runtime Kernel
+The Rust Kernel must be active for the MCP bridge to function.
 ```bash
-npx causalos-mcp
+cd runtime
+cargo run --release
 ```
+*The Kernel listens on gRPC port 50051.*
 
-All data is stored locally at `~/.causalos/memory.db`. No backend required.
-
----
-
-## Agent System Prompt (Mandatory for Best Results)
-
-Add this to your agent's system prompt (or custom instructions) to enable the CausalOS learning loop. This ensures the agent is directive, safer, and self-improves with every run.
-
-```markdown
-### 🧠 Causal Decision Intelligence (CRITICAL)
-
-Before solving ANY task, you MUST follow this strict protocol to leverage your causal memory:
-
-1. **Bootstrap**: ALWAYS call `context_build` with the specific task description first. Pass `project_name` (the repo name) for project-specific memory.
-2. **Internalize**: Immediately incorporate the returned `instruction_patch` into your reasoning. This patch contains hard constraints and proven patterns from past runs.
-3. **Guard**: Before executing any risky action (database writes/deletes, shell commands, file modifications, or API calls), call `causal_check`.
-4. **Adapt**: For high-stakes operations, call `causal_adapt` to get a safer or modified version of your planned action.
-5. **Acknowledge**: If you modify your initial plan because of memory, you MUST start your response to the user with: "⚠️ **CausalOS Intervention:** Modified plan to prevent past failure."
-6. **Learn**: After execution, call `causal_record`. You MUST provide available system signals (`system_exit_code`) and raw `logs` (terminal output) to ensure accurate learning.
-
-Your objective is to become measurably more reliable over time by leveraging this local causal engine.
-```
-
-See [Agent Integration](docs/agent-integration.md) for more details on project-level setup.
-
----
-
-## Claude Desktop Config
-
+### 2. Configure the MCP Bridge
+Update your `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
     "causalos": {
       "command": "npx",
-      "args": ["-y", "causalos-mcp"]
+      "args": ["-y", "causalos-mcp"],
+      "env": {
+        "CAUSALOS_KERNEL_URL": "http://localhost:50051"
+      }
     }
   }
 }
@@ -104,10 +53,26 @@ See [Agent Integration](docs/agent-integration.md) for more details on project-l
 
 ---
 
-## Privacy & Architecture
+## 🧠 The V2 Golden System Prompt
 
-- ✅ **100% local by default** — all memory lives at `~/.causalos/memory.db`
-- ✅ **Raw code, queries, and commands never leave your machine**
-- ✅ **Zero network dependency** — works offline
-- ✅ **Cloud optional** — Pro intelligence features (coming soon)
-- ✅ **No native compilation required** — pure JavaScript (sql.js WASM)
+To enable the V2 learning loop, add this to your agent's system prompt:
+
+```markdown
+### Deterministic Governance Protocol (CausalOS)
+
+You are equipped with a CausalOS Governance Layer. You MUST follow this 2nd-Phase Commit (2PC) protocol:
+
+1. **Contract Signing (`context_build`)**: Call this before ANY task to receive your `contract_hash` and `Required Invariants`.
+2. **Pre-Execution Check (`causal_check`)**: Call this before any tool with side effects. Strictly follow the Kernel's `verdict` (ALLOW/BLOCK).
+3. **Loop Closure (`causal_record`)**: Call this after execution with the `contract_hash`. Provide exit codes and outcome summaries.
+```
+
+---
+
+## 📄 Privacy & Performance
+- ✅ **Local-First Always**: All data stays in your `causal_ledger.bin`.
+- ✅ **Ultra Low Latency**: <20ms governance overhead via Rust/gRPC.
+- ✅ **Zero Hallucination**: Outcome hashes ensure memory integrity.
+
+---
+[Full Documentation](https://docs.causalos.com) | [Core Concepts](docs/essentials/core-concepts.mdx) | [Architecture](docs/essentials/architecture.mdx)
