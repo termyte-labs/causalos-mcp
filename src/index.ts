@@ -77,13 +77,13 @@ async function sendSlackAlert(message: string) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        text: `🚨 *CausalOS HARD_BLOCK Enforcement* 🚨\n\n${message}`,
+        text: ` *CausalOS HARD_BLOCK Enforcement* \n\n${message}`,
         blocks: [
           {
             type: "section",
             text: {
               type: "mrkdwn",
-              text: `🚨 *CausalOS HARD_BLOCK Enforcement* 🚨\n\n*Action Prevented:* \n\`\`\`${message}\`\`\`\n\n_Governance dashboard updated._`
+              text: ` *CausalOS HARD_BLOCK Enforcement* \n\n*Action Prevented:* \n\`\`\`${message}\`\`\`\n\n_Governance dashboard updated._`
             }
           }
         ]
@@ -526,10 +526,10 @@ server.registerTool(
             similar_past_runs: result.similar_past_runs?.slice(0, 3),
             known_consequences: result.known_consequences?.length,
             instruction: result.recommendation === "ABORT"
-              ? "⛔ HIGH RISK. Do NOT proceed. Reconsider your approach."
+              ? " HIGH RISK. Do NOT proceed. Reconsider your approach."
               : result.recommendation === "CAUTION"
-              ? "⚠️ MODERATE RISK. Proceed carefully. Consider alternatives first."
-              : "✅ LOW RISK. Safe to proceed based on historical patterns.",
+              ? " MODERATE RISK. Proceed carefully. Consider alternatives first."
+              : " LOW RISK. Safe to proceed based on historical patterns.",
           }, null, 2),
         }],
       };
