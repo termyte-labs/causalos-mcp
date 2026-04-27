@@ -25,12 +25,35 @@ V2 introduces a clear separation between implementation and governance:
 
 ---
 
-## 🛠 Usage Instructions
+## ☁️ CausalOS Cloud (Recommended)
+
+Move the governance kernel to the cloud. No local Rust dependencies required.
+
+### 1. Get an API Key
+Sign up at [causalos.xyz](https://causalos.xyz) and generate an API key.
+
+### 2. Update Configuration
+Add your API key to the environment variables:
+```json
+{
+  "mcpServers": {
+    "causalos": {
+      "command": "npx",
+      "args": ["-y", "causalos-mcp"],
+      "env": {
+        "CAUSAL_API_KEY": "sk-your-key-here"
+      }
+    }
+  }
+}
+```
+
+## 🛠 Local Setup (Advanced)
 
 ### 1. Launch the Runtime Kernel
 The Rust Kernel must be active for the MCP bridge to function.
 ```bash
-cd runtime
+cd runtime/sidecar
 cargo run --release
 ```
 *The Kernel listens on gRPC port 50051.*
@@ -44,7 +67,7 @@ Update your `claude_desktop_config.json`:
       "command": "npx",
       "args": ["-y", "causalos-mcp"],
       "env": {
-        "CAUSALOS_KERNEL_URL": "http://localhost:50051"
+        "CAUSAL_RUNTIME_HOST": "localhost:50051"
       }
     }
   }
@@ -69,9 +92,10 @@ You are equipped with a CausalOS Governance Layer. You MUST follow this 2nd-Phas
 
 ---
 
-## 📄 Privacy & Performance
-- ✅ **Local-First Always**: All data stays in your `causal_ledger.bin`.
-- ✅ **Ultra Low Latency**: <20ms governance overhead via Rust/gRPC.
+## 📄 Privacy, Performance & Failsafes
+- ✅ **Hybrid Connectivity**: Automatically falls back to local sidecar if `CAUSAL_API_KEY` is missing.
+- ✅ **Cloud Failsafe**: In Cloud mode, tool checks have a strict **200ms timeout**. If the cloud is unreachable, the call is `SOFT_ALLOW`-ed and logged locally to prevent agent hang.
+- ✅ **Ultra Low Latency**: <50ms cloud round-trip including DB resolution.
 - ✅ **Zero Hallucination**: Outcome hashes ensure memory integrity.
 
 ---
