@@ -5,13 +5,16 @@ import { z } from "zod";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { kernel } from "./client.js";
+import { Sanitizer } from "./sanitizer.js";
+import { HotCache } from "./cache.js";
+import axios from "axios";
 
 const execAsync = promisify(exec);
 
 // ─── Server ───────────────────────────────────────────────────────────────────
 const server = new McpServer({
   name: "causalos-mcp",
-  version: "2.1.0",
+  version: "3.1.0",
 });
 
 // ─── Tool 1: context_build (V2 — Kernel Evaluation) ───────────────────────────
@@ -61,7 +64,7 @@ server.registerTool(
       };
     } catch (error: any) {
       return {
-        content: [{ type: "text", text: `Kernel Error: ${error.message}. Ensure causalos-runtime is running on port 50051.` }],
+        content: [{ type: "text", text: `Kernel Error: ${error.message}. Ensure CAUSAL_API_KEY is valid and Cloud Runtime is reachable.` }],
         isError: true,
       };
     }
@@ -110,34 +113,60 @@ server.registerTool(
   },
   async ({ action, action_type, contract_hash, parent_event_hash, session_id }) => {
     try {
+      // 1. Check Local Hot Cache first (Privacy-First & Deterministic)
+      const fingerprint = Sanitizer.getFingerprint(action_type, { action });
+      const cachedVerdict = HotCache.get(fingerprint);
+
+      if (cachedVerdict) {
+        console.error(`HotCache HIT for ${action_type} (Fingerprint: ${fingerprint.substring(0, 8)})`);
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              ...cachedVerdict,
+              source: "LOCAL_CACHE",
+              message: `CausalOS Sidecar: ${cachedVerdict.recommendation}. Reason: ${cachedVerdict.reason}`
+            }, null, 2)
+          }]
+        };
+      }
+
+      // 2. Fallback to Cloud Runtime (Sanitized)
+      const redactedAction = Sanitizer.redact(action);
       const verdict = await kernel.prepareToolCall(
         contract_hash || "adhoc_contract",
         parent_event_hash || "root",
         action_type,
-        JSON.stringify({ action }),
+        JSON.stringify({ action: redactedAction }),
         "default_agent",
         session_id || "adhoc_session"
       );
 
       if (verdict.action === "HARD_BLOCK" || verdict.action === "BLOCK") {
-        await sendSlackAlert(`${action_type}: ${action}`);
+        await sendSlackAlert(`${action_type}: ${redactedAction}`);
       }
+
+      const response = {
+        verdict: verdict.action,
+        reason: verdict.reason,
+        tool_call_id: verdict.tool_call_id,
+        recommendation: verdict.action === "ALLOW" ? "PROCEED" : "ABORT/MODIFY",
+        message: `Kernel Governance: ${verdict.action}. Reason: ${verdict.reason}`,
+      };
+
+      // Store in Hot Cache for future deterministic hits
+      HotCache.set(fingerprint, {
+        recommendation: response.recommendation as any,
+        reason: response.reason,
+        confidence: 0.8,
+        risk_score: verdict.action === "ALLOW" ? 0 : 1
+      });
 
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(
-              {
-                verdict: verdict.action,
-                reason: verdict.reason,
-                tool_call_id: verdict.tool_call_id,
-                recommendation: verdict.action === "ALLOW" ? "PROCEED" : "ABORT/MODIFY",
-                message: `Kernel Governance: ${verdict.action}. Reason: ${verdict.reason}`,
-              },
-              null,
-              2
-            ),
+            text: JSON.stringify(response, null, 2),
           },
         ],
       };
@@ -165,12 +194,15 @@ server.registerTool(
   },
   async ({ tool_name, arguments: args, contract_hash, parent_event_hash, session_id }) => {
     try {
+      // 0. Redact locally before any network call
+      const redactedArgs = Sanitizer.redact(args);
+
       // 1. PREPARE (Gated by Kernel)
       const verdict = await kernel.prepareToolCall(
         contract_hash,
         parent_event_hash,
         tool_name,
-        JSON.stringify(args),
+        JSON.stringify(redactedArgs),
         "default_agent",
         session_id || "adhoc_session"
       );
@@ -243,11 +275,14 @@ server.registerTool(
   },
   async ({ anchor_id, success, outcome, system_exit_code, session_id }) => {
     try {
+      // 0. Redact outcome locally
+      const redactedOutcome = Sanitizer.redact(outcome);
+
       // 1. Record the high-level outcome for the learning loop
-      await kernel.recordOutcome(anchor_id, "Standard Completion", success, outcome, session_id || "adhoc_session");
+      await kernel.recordOutcome(anchor_id, "Standard Completion", success, redactedOutcome, session_id || "adhoc_session");
       
       // 2. Commit the specific tool trace
-      await kernel.commitToolCall(anchor_id, JSON.stringify({ outcome, exit_code: system_exit_code }), success);
+      await kernel.commitToolCall(anchor_id, JSON.stringify({ outcome: redactedOutcome, exit_code: system_exit_code }), success);
 
       return {
         content: [
@@ -584,20 +619,45 @@ server.registerTool(
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  const host = process.env.CAUSAL_RUNTIME_HOST || 'localhost:50051';
-  const localMode = process.env.CAUSAL_LOCAL_MODE === 'true';
-  const mode = localMode ? 'LOCAL (Legacy)' : 'CLOUD (Production)';
+  const runtimeUrl = process.env.CAUSAL_RUNTIME_URL || 'https://runtime.causalos.xyz';
   
-  console.error(`CausalOS MCP v3.0 running — ${mode}`);
-  if (localMode) {
-    console.error(`Kernel gRPC: ${host}`);
-  } else {
-    console.error(`Runtime URL: ${process.env.CAUSAL_RUNTIME_URL || 'https://runtime.causalos.xyz'}`);
-  }
+  console.error(`CausalOS MCP v3.1.0 running — CLOUD_HEAVY MODE`);
+  console.error(`Runtime URL: ${runtimeUrl}`);
   
   console.error(`Tools: context_build | causal_check | causal_record | causalos_execute`);
   console.error(`       memory_store | memory_query | causal_graph_add`);
   console.error(`       causal_simulate | causal_backtrack | causal_history`);
+
+  // Start background sync
+  startSyncLoop();
+}
+
+async function startSyncLoop() {
+  const runtimeUrl = process.env.CAUSAL_RUNTIME_URL || 'https://runtime.causalos.xyz';
+  const apiKey = process.env.CAUSAL_API_KEY;
+
+  if (!apiKey) {
+    console.error("CAUSAL_API_KEY not set. Local Sidecar will not sync with Cloud Runtime.");
+    return;
+  }
+
+  const sync = async () => {
+    try {
+      const response = await axios.get(`${runtimeUrl}/v1/sync`, {
+        headers: { "Authorization": `Bearer ${apiKey}` }
+      });
+      HotCache.updateFromSync(response.data);
+      console.error(`Sidecar Sync: Updated hot-cache with ${Object.keys(response.data).length} patterns.`);
+    } catch (err: any) {
+      console.error(`Sidecar Sync Failure: ${err.message}`);
+    }
+  };
+
+  // Initial sync
+  await sync();
+  
+  // Periodic sync every 5 minutes
+  setInterval(sync, 1000 * 60 * 5);
 }
 
 main().catch((error) => {

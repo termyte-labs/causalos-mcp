@@ -15,7 +15,7 @@ export class CloudKernelClient {
         this.client = axios.create({
             baseURL: CLOUD_URL,
             headers: {
-                'Authorization': `Bearer DEV_BYPASS`,
+                'Authorization': `Bearer ${API_KEY || 'DEV_BYPASS'}`,
                 'Content-Type': 'application/json'
             },
             timeout: 15000 // Increased to 15s for cloud reliability
