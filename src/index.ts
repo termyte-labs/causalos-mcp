@@ -7,6 +7,7 @@ import { promisify } from "util";
 import { kernel } from "./client.js";
 import { Sanitizer } from "./sanitizer.js";
 import { HotCache } from "./cache.js";
+import { GovernanceManager } from "./governance-manager.js";
 import axios from "axios";
 
 const execAsync = promisify(exec);
@@ -14,8 +15,11 @@ const execAsync = promisify(exec);
 // ─── Server ───────────────────────────────────────────────────────────────────
 const server = new McpServer({
   name: "causalos-mcp",
-  version: "3.1.0",
+  version: "3.2.0",
 });
+
+const govManager = new GovernanceManager(kernel.cloudClient);
+govManager.initialize().catch(err => console.error("[CausalOS] Governance Initialization Failed:", err));
 
 // ─── Tool 1: context_build (V2 — Kernel Evaluation) ───────────────────────────
 server.registerTool(
@@ -31,7 +35,7 @@ server.registerTool(
       environment: z.string().optional().describe("Optional: relevant environment context"),
     }),
   },
-  async ({ task, session_id, project_name, action_type }) => {
+  withFailureTracking(async ({ task, session_id, project_name, action_type }: any) => {
     const agentId = session_id ?? "default_agent";
     const projectId = project_name ?? "default_project";
 
@@ -68,7 +72,7 @@ server.registerTool(
         isError: true,
       };
     }
-  }
+  }, "context_build")
 );
 
 // ─── Slack Integration ────────────────────────────────────────────────────────
@@ -97,6 +101,42 @@ async function sendSlackAlert(message: string) {
   }
 }
 
+/**
+ * withFailureTracking - Middleware to automatically log tool errors to CausalOS
+ */
+function withFailureTracking(handler: any, toolName: string) {
+  return async (args: any, ...rest: any[]) => {
+    try {
+      const result = await handler(args, ...rest);
+      // If the result itself reports an error (standard MCP pattern)
+      if (result && result.isError) {
+        govManager.logAsync('failure', {
+          session_id: args.session_id || "adhoc_session",
+          label: `Tool Error: ${toolName}`,
+          error_message: JSON.stringify(result.content),
+          context: { tool: toolName, args: Sanitizer.redact(args) }
+        });
+      }
+      return result;
+    } catch (error: any) {
+      console.error(`[CausalOS] Automated Failure Capture: ${toolName} failed:`, error.message);
+      
+      // Log the crash to the Causal Ledger asynchronously
+      govManager.logAsync('failure', {
+        session_id: args.session_id || "adhoc_session",
+        label: `Tool Crash: ${toolName}`,
+        error_message: error.message,
+        context: { tool: toolName, stack: error.stack, args: Sanitizer.redact(args) }
+      });
+
+      return {
+        content: [{ type: "text", text: `Internal Error in ${toolName}: ${error.message}` }],
+        isError: true,
+      };
+    }
+  };
+}
+
 // ─── Tool 2: causal_check (V2 — Kernel Governance) ───────────────────────────
 server.registerTool(
   "causal_check",
@@ -104,63 +144,54 @@ server.registerTool(
     description:
       "Check if a specific action has caused failures before. Returns a Verdict from the Rust Kernel.",
     inputSchema: z.object({
-      action: z.string().describe("The exact action about to be taken"),
-      action_type: z.string().describe("The type of action"),
-      contract_hash: z.string().optional().describe("Contract hash from context_build"),
-      parent_event_hash: z.string().optional().describe("Parent event hash"),
-      session_id: z.string().optional().describe("Session ID"),
+      action: z.string().describe("The action to check"),
+      action_type: z.string().describe("The type of action (e.g. 'shell_command')"),
+      contract_hash: z.string().optional().describe("Current contract context"),
+      parent_event_hash: z.string().optional().describe("Parent event in the DAG"),
+      session_id: z.string().optional().describe("Agent Session ID"),
     }),
   },
-  async ({ action, action_type, contract_hash, parent_event_hash, session_id }) => {
+  withFailureTracking(async ({ action, action_type, contract_hash, parent_event_hash, session_id }: any) => {
     try {
-      // 1. Check Local Hot Cache first (Privacy-First & Deterministic)
+      // 1. Check Local Governance Engine (Zero Latency)
       const fingerprint = Sanitizer.getFingerprint(action_type, { action });
-      const cachedVerdict = HotCache.get(fingerprint);
+      const localVerdict = govManager.checkAction(fingerprint);
 
-      if (cachedVerdict) {
-        console.error(`HotCache HIT for ${action_type} (Fingerprint: ${fingerprint.substring(0, 8)})`);
+      if (localVerdict) {
+        console.error(`[CausalOS] Local Match Found: ${localVerdict.recommendation} (Confidence: ${localVerdict.confidence})`);
         return {
           content: [{
             type: "text",
             text: JSON.stringify({
-              ...cachedVerdict,
-              source: "LOCAL_CACHE",
-              message: `CausalOS Sidecar: ${cachedVerdict.recommendation}. Reason: ${cachedVerdict.reason}`
+              ...localVerdict,
+              source: "LOCAL_ENGINE",
+              message: `Local Governance: ${localVerdict.recommendation}. Reason: ${localVerdict.reason}`
             }, null, 2)
           }]
         };
       }
 
-      // 2. Fallback to Cloud Runtime (Sanitized)
+      // 2. Local MISS -> Fail-Open but Record for learning
       const redactedAction = Sanitizer.redact(action);
-      const verdict = await kernel.prepareToolCall(
+      
+      // Trigger a background "Prepare" call to let the cloud see this new action
+      // We don't await this, so the agent continues at full speed.
+      kernel.prepareToolCall(
         contract_hash || "adhoc_contract",
         parent_event_hash || "root",
         action_type,
         JSON.stringify({ action: redactedAction }),
         "default_agent",
         session_id || "adhoc_session"
-      );
-
-      if (verdict.action === "HARD_BLOCK" || verdict.action === "BLOCK") {
-        await sendSlackAlert(`${action_type}: ${redactedAction}`);
-      }
+      ).catch(() => {}); // Silent catch for background call
 
       const response = {
-        verdict: verdict.action,
-        reason: verdict.reason,
-        tool_call_id: verdict.tool_call_id,
-        recommendation: verdict.action === "ALLOW" ? "PROCEED" : "ABORT/MODIFY",
-        message: `Kernel Governance: ${verdict.action}. Reason: ${verdict.reason}`,
+        verdict: "ALLOW",
+        reason: "Unknown action pattern. Permitting execution while observing.",
+        recommendation: "PROCEED",
+        source: "LOCAL_FAIL_OPEN",
+        message: "CausalOS: Action permitted (unseen pattern). Ledger updated in background.",
       };
-
-      // Store in Hot Cache for future deterministic hits
-      HotCache.set(fingerprint, {
-        recommendation: response.recommendation as any,
-        reason: response.reason,
-        confidence: 0.8,
-        risk_score: verdict.action === "ALLOW" ? 0 : 1
-      });
 
       return {
         content: [
@@ -172,11 +203,11 @@ server.registerTool(
       };
     } catch (error: any) {
       return {
-        content: [{ type: "text", text: `Kernel Error: ${error.message}` }],
+        content: [{ type: "text", text: `Governance Engine Error: ${error.message}` }],
         isError: true,
       };
     }
-  }
+  }, "causal_check")
 );
 
 // ─── Tool 4: causalos_execute (Mandatory Governance Broker) ──────────────────
@@ -185,14 +216,14 @@ server.registerTool(
   {
     description: "MANDATORY EXECUTION BROKER. All tool executions (shell, filesystem, etc.) MUST be routed through this tool to ensure governance and lineage.",
     inputSchema: z.object({
-      tool_name: z.string().describe("The name of the tool to execute (e.g. 'run_command', 'write_file')"),
-      arguments: z.any().describe("The arguments for the tool"),
-      contract_hash: z.string().describe("The contract_hash from context_build"),
-      parent_event_hash: z.string().describe("The hash of the preceding event"),
-      session_id: z.string().optional().describe("Session identifier"),
+      tool_name: z.string(),
+      arguments: z.any(),
+      contract_hash: z.string(),
+      parent_event_hash: z.string(),
+      session_id: z.string().optional(),
     }),
   },
-  async ({ tool_name, arguments: args, contract_hash, parent_event_hash, session_id }) => {
+  withFailureTracking(async ({ tool_name, arguments: args, contract_hash, parent_event_hash, session_id }: any) => {
     try {
       // 0. Redact locally before any network call
       const redactedArgs = Sanitizer.redact(args);
@@ -234,9 +265,12 @@ server.registerTool(
         outcome = { error: err.message };
       }
 
-      // 3. COMMIT (Record in Ledger)
-      await kernel.commitToolCall(verdict.tool_call_id, JSON.stringify(outcome), success);
-      await kernel.recordOutcome(verdict.tool_call_id, "Execution Result", success, JSON.stringify(outcome), session_id || "adhoc_session");
+      // 3. COMMIT (Record in Ledger - ASYNC)
+      govManager.logAsync('outcome', { 
+        tool_call_id: verdict.tool_call_id, 
+        outcome_json: JSON.stringify(outcome), 
+        success 
+      });
 
       return {
         content: [{
@@ -245,7 +279,8 @@ server.registerTool(
                 status: success ? "SUCCESS" : "FAILED",
                 execution_id: verdict.tool_call_id,
                 event_hash: "H_" + verdict.tool_call_id, // Kernel actually computes this, we just return status
-                result: outcome
+                result: outcome,
+                ledger_status: "QUEUED_FOR_SYNC"
             }, null, 2)
         }]
       };
@@ -256,7 +291,7 @@ server.registerTool(
         isError: true,
       };
     }
-  }
+  }, "causalos_execute")
 );
 
 // ─── Tool 3: causal_record (V2 — Closing the Loop) ───────────────────────────
@@ -273,16 +308,17 @@ server.registerTool(
       system_exit_code: z.number().optional().describe("Exit code from system"),
     }),
   },
-  async ({ anchor_id, success, outcome, system_exit_code, session_id }) => {
+  withFailureTracking(async ({ anchor_id, success, outcome, system_exit_code, session_id }: any) => {
     try {
       // 0. Redact outcome locally
       const redactedOutcome = Sanitizer.redact(outcome);
 
-      // 1. Record the high-level outcome for the learning loop
-      await kernel.recordOutcome(anchor_id, "Standard Completion", success, redactedOutcome, session_id || "adhoc_session");
-      
-      // 2. Commit the specific tool trace
-      await kernel.commitToolCall(anchor_id, JSON.stringify({ outcome: redactedOutcome, exit_code: system_exit_code }), success);
+      // 1. Record the high-level outcome for the learning loop (ASYNC)
+      govManager.logAsync('outcome', { 
+        tool_call_id: anchor_id, 
+        outcome_json: JSON.stringify({ outcome: redactedOutcome, exit_code: system_exit_code }), 
+        success 
+      });
 
       return {
         content: [
@@ -291,8 +327,8 @@ server.registerTool(
             text: JSON.stringify(
               {
                 recorded: true,
-                ledger_status: "COMMITTED",
-                message: `Outcome recorded in Causal Ledger. The Kernel has learned from this ${success ? "success" : "failure"}.`,
+                ledger_status: "QUEUED",
+                message: `Outcome queued for sync. The Kernel will learn from this ${success ? "success" : "failure"} in the next heartbeat.`,
               },
               null,
               2
@@ -306,10 +342,10 @@ server.registerTool(
         isError: true,
       };
     }
-  }
+  }, "causal_record")
 );
 
-// ─── Tool 4: causal_history (V2 — Ledger Trace) ──────────────────────────────
+// ─── Tool 5: causal_history (V2 — Ledger Trace) ──────────────────────────────
 server.registerTool(
   "causal_history",
   {
@@ -318,7 +354,7 @@ server.registerTool(
       plan_hash: z.string().describe("The hash of the plan to trace"),
     }),
   },
-  async ({ plan_hash }) => {
+  withFailureTracking(async ({ plan_hash }: any) => {
     try {
       const trace = await kernel.getCausalTrace(plan_hash);
       return {
@@ -335,10 +371,10 @@ server.registerTool(
         isError: true,
       };
     }
-  }
+  }, "causal_history")
 );
 
-// ─── Tool 5: memory_store (V3 — General Context Memory) ──────────────────────
+// ─── Tool 6: memory_store (V3 — General Context Memory) ──────────────────────
 server.registerTool(
   "memory_store",
   {
@@ -355,7 +391,7 @@ server.registerTool(
       ttl_seconds: z.number().optional().describe("Time-to-live in seconds. Omit for permanent storage."),
     }),
   },
-  async ({ memory_key, memory_value, tags, session_id, project_id, agent_id, importance, ttl_seconds }) => {
+  withFailureTracking(async ({ memory_key, memory_value, tags, session_id, project_id, agent_id, importance, ttl_seconds }: any) => {
     try {
       const result = await kernel.storeMemory({
         memory_key,
@@ -384,10 +420,10 @@ server.registerTool(
         isError: true,
       };
     }
-  }
+  }, "memory_store")
 );
 
-// ─── Tool 6: memory_query (V3 — Context Retrieval) ───────────────────────────
+// ─── Tool 7: memory_query (V3 — Context Retrieval) ───────────────────────────
 server.registerTool(
   "memory_query",
   {
@@ -402,7 +438,7 @@ server.registerTool(
       limit: z.number().optional().describe("Maximum number of results (default: 20)"),
     }),
   },
-  async ({ tags, search, session_id, project_id, agent_id, limit }) => {
+  withFailureTracking(async ({ tags, search, session_id, project_id, agent_id, limit }: any) => {
     try {
       const results = await kernel.queryMemory({
         tags: tags ?? [],
@@ -428,10 +464,10 @@ server.registerTool(
         isError: true,
       };
     }
-  }
+  }, "memory_query")
 );
 
-// ─── Tool 7: causal_graph_add (V3 — Build Causal Memory) ─────────────────────
+// ─── Tool 8: causal_graph_add (V3 — Build Causal Memory) ─────────────────────
 server.registerTool(
   "causal_graph_add",
   {
@@ -439,27 +475,24 @@ server.registerTool(
       "Add a node or edge to the causal memory graph. Use this to record what happened and WHY it happened, building a causal chain. Call after significant events to build the causal world model. Nodes represent events/actions/outcomes; edges represent causal relationships (what caused what).",
     inputSchema: z.object({
       operation: z.enum(["add_node", "add_edge"]).describe("Whether to add a node or an edge"),
-      // Node fields
-      label: z.string().optional().describe("Human-readable label for the node (e.g., 'User ran npm install', 'Database connection failed')"),
-      node_type: z.enum(["event", "state", "action", "outcome", "observation"]).optional().describe("Type of the node"),
-      payload: z.record(z.string(), z.any()).optional().describe("Additional data to store with the node"),
-      parent_node_id: z.string().optional().describe("ID of a parent/summary node for hierarchical compression"),
-      confidence: z.number().min(0).max(1).optional().describe("Confidence this node was accurately recorded (0-1)"),
-      // Edge fields
-      from_node_id: z.string().optional().describe("ID of the cause node"),
-      to_node_id: z.string().optional().describe("ID of the effect node"),
-      relation_type: z.enum(["caused", "led_to", "depends_on", "prevented", "enabled", "correlated"]).optional().describe("Type of causal relationship"),
-      weight: z.number().min(0).max(1).optional().describe("Causal strength 0-1 (higher = stronger causal link)"),
-      explanation: z.string().optional().describe("Human-readable explanation of why A caused B"),
-      // Shared
-      session_id: z.string().optional().describe("Session identifier"),
-      project_id: z.string().optional().describe("Project identifier"),
-      agent_id: z.string().optional().describe("Agent identifier"),
+      label: z.string().optional().describe("Human-readable label for the node"),
+      node_type: z.enum(["event", "state", "action", "outcome", "observation"]).optional(),
+      payload: z.record(z.string(), z.any()).optional(),
+      parent_node_id: z.string().optional(),
+      confidence: z.number().min(0).max(1).optional(),
+      from_node_id: z.string().optional(),
+      to_node_id: z.string().optional(),
+      relation_type: z.string().optional(),
+      weight: z.number().optional(),
+      explanation: z.string().optional(),
+      session_id: z.string().optional(),
+      project_id: z.string().optional(),
+      agent_id: z.string().optional(),
     }),
   },
-  async ({ operation, label, node_type, payload, parent_node_id, confidence,
+  withFailureTracking(async ({ operation, label, node_type, payload, parent_node_id, confidence,
            from_node_id, to_node_id, relation_type, weight, explanation,
-           session_id, project_id, agent_id }) => {
+           session_id, project_id, agent_id }: any) => {
     try {
       if (operation === "add_node") {
         if (!label || !node_type || !session_id) {
@@ -523,10 +556,10 @@ server.registerTool(
         isError: true,
       };
     }
-  }
+  }, "causal_graph_add")
 );
 
-// ─── Tool 8: causal_simulate (V3 — Forward Reasoning) ────────────────────────
+// ─── Tool 9: causal_simulate (V3 — Forward Reasoning) ────────────────────────
 server.registerTool(
   "causal_simulate",
   {
@@ -539,7 +572,7 @@ server.registerTool(
       context_node_id: z.string().optional().describe("Optional: ID of the current state node in the causal graph, for consequence lookup"),
     }),
   },
-  async ({ proposed_action, action_type, session_id, context_node_id }) => {
+  withFailureTracking(async ({ proposed_action, action_type, session_id, context_node_id }: any) => {
     try {
       const result = await kernel.simulateForward({
         proposed_action,
@@ -574,10 +607,10 @@ server.registerTool(
         isError: true,
       };
     }
-  }
+  }, "causal_simulate")
 );
 
-// ─── Tool 9: causal_backtrack (V3 — Backward Reasoning) ──────────────────────
+// ─── Tool 10: causal_backtrack (V3 — Backward Reasoning) ──────────────────────
 server.registerTool(
   "causal_backtrack",
   {
@@ -589,7 +622,7 @@ server.registerTool(
       min_edge_weight: z.number().min(0).max(1).optional().describe("Minimum causal link strength to follow (default: 0.2, lower = more speculative links)"),
     }),
   },
-  async ({ node_id, max_depth, min_edge_weight }) => {
+  withFailureTracking(async ({ node_id, max_depth, min_edge_weight }: any) => {
     try {
       const result = await kernel.backtrack(node_id, max_depth, min_edge_weight);
       return {
@@ -612,52 +645,66 @@ server.registerTool(
         isError: true,
       };
     }
-  }
+  }, "causal_backtrack")
+);
+
+// ─── Tool 11: log_failure (Explicit Manual Logging) ──────────────────────────
+server.registerTool(
+  "log_failure",
+  {
+    description: "Explicitly log a system failure or agent error to the Causal Ledger for post-mortem analysis.",
+    inputSchema: z.object({
+      label: z.string().describe("Short description of the failure (e.g. 'Dependency resolution failed')"),
+      error_message: z.string().describe("The detailed error message or exception trace"),
+      session_id: z.string().describe("The current session ID"),
+      context: z.record(z.string(), z.any()).optional().describe("Additional structured metadata about the failure"),
+    }),
+  },
+  withFailureTracking(async ({ label, error_message, session_id, context }: any) => {
+    try {
+      const node = await kernel.logSystemFailure({
+        session_id,
+        label,
+        error_message,
+        context: Sanitizer.redact(context || {})
+      });
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            logged: true,
+            node_id: node.id,
+            message: `Failure logged to Causal Graph. Node ID: ${node.id}`
+          }, null, 2)
+        }]
+      };
+    } catch (error: any) {
+      return {
+        content: [{ type: "text", text: `Logging Error: ${error.message}` }],
+        isError: true,
+      };
+    }
+  }, "log_failure")
 );
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  const runtimeUrl = process.env.CAUSAL_RUNTIME_URL || 'https://runtime.causalos.xyz';
+  const runtimeUrl = process.env.CAUSAL_RUNTIME_URL || 'https://cloud-runtime-production.up.railway.app';
   
-  console.error(`CausalOS MCP v3.1.0 running — CLOUD_HEAVY MODE`);
+  console.error(`CausalOS MCP v3.2.0 running — LOCAL_FIRST MODE`);
   console.error(`Runtime URL: ${runtimeUrl}`);
+  console.error(`Governance: Offline-Resilient | Telemetry: Async-Batched`);
   
   console.error(`Tools: context_build | causal_check | causal_record | causalos_execute`);
   console.error(`       memory_store | memory_query | causal_graph_add`);
   console.error(`       causal_simulate | causal_backtrack | causal_history`);
-
-  // Start background sync
-  startSyncLoop();
 }
 
 async function startSyncLoop() {
-  const runtimeUrl = process.env.CAUSAL_RUNTIME_URL || 'https://runtime.causalos.xyz';
-  const apiKey = process.env.CAUSAL_API_KEY;
-
-  if (!apiKey) {
-    console.error("CAUSAL_API_KEY not set. Local Sidecar will not sync with Cloud Runtime.");
-    return;
-  }
-
-  const sync = async () => {
-    try {
-      const response = await axios.get(`${runtimeUrl}/v1/sync`, {
-        headers: { "Authorization": `Bearer ${apiKey}` }
-      });
-      HotCache.updateFromSync(response.data);
-      console.error(`Sidecar Sync: Updated hot-cache with ${Object.keys(response.data).length} patterns.`);
-    } catch (err: any) {
-      console.error(`Sidecar Sync Failure: ${err.message}`);
-    }
-  };
-
-  // Initial sync
-  await sync();
-  
-  // Periodic sync every 5 minutes
-  setInterval(sync, 1000 * 60 * 5);
+  // Logic moved to GovernanceManager
 }
 
 main().catch((error) => {

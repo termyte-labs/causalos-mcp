@@ -156,4 +156,33 @@ export class CloudKernelClient {
         });
         return resp.data;
     }
+
+    async logSystemFailure(params: {
+        session_id: string;
+        agent_id?: string;
+        project_id?: string;
+        label: string;
+        error_message: string;
+        context?: Record<string, unknown>;
+    }) {
+        const node = await this.createCausalNode({
+            session_id: params.session_id,
+            agent_id: params.agent_id,
+            project_id: params.project_id,
+            label: `FAILURE: ${params.label}`,
+            node_type: 'outcome',
+            payload: {
+                error: params.error_message,
+                ...params.context,
+                timestamp: new Date().toISOString()
+            },
+            confidence: 1.0
+        });
+        return node;
+    }
+
+    async getGovernanceSnapshot() {
+        const resp = await this.client.get('/v1/sync');
+        return resp.data;
+    }
 }

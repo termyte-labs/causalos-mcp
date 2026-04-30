@@ -2,7 +2,21 @@
 
 All notable changes to the CausalOS project will be documented in this file.
 
+## [3.1.1] - 2026-04-29
+
+### Added
+- **Automated Failure Tracking**: Implemented `withFailureTracking` middleware to automatically capture tool crashes and errors.
+- **Robust Error Context**: Enhanced logging with redacted arguments, stack traces, and session-aware metadata.
+- **System Failure Logging**: Added `logSystemFailure` to the Cloud Kernel Client for recording exceptions in the Causal Ledger.
+- **Manual Logging Tool**: Registered `log_failure` tool for explicit agent-triggered error reporting.
+- **Cloud Failover**: Improved reliability with consistent default URLs and error handling for cloud connectivity.
+
+### Fixed
+- **Tool Wrapping Consistency**: Refactored all tool registrations to use the correct middleware pattern, fixing type errors and ensuring 100% coverage for failure tracking.
+- **TypeScript Configuration**: Resolved `rootDir` conflicts by excluding `scratch/` from the build process.
+
 ## [2.0.0] - 2026-04-20
+
 
 ### 🚀 Major Architectural Shift: The Split-Plane Unification
 

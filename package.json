@@ -1,6 +1,6 @@
 {
   "name": "causalos-mcp",
-  "version": "3.1.1",
+  "version": "3.2.0",
   "description": "Dual Memory Agent Runtime: Causal Graph Engine + General Memory + Forward Simulation + Backward Inference for AI Agents",
   "main": "dist/index.js",
   "bin": {

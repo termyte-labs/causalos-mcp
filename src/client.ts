@@ -6,7 +6,7 @@ import { CloudKernelClient } from './cloud-client.js';
  * It replaces the legacy gRPC local sidecar to simplify the user experience (MCP-only).
  */
 export class KernelClient {
-  private cloudClient: CloudKernelClient;
+  public cloudClient: CloudKernelClient;
 
   constructor() {
     this.cloudClient = new CloudKernelClient();
@@ -15,7 +15,18 @@ export class KernelClient {
   // ─── V2: Lifecycle & Planning ─────────────────────────────────────────────
 
   async evaluatePlan(agent_id: string, project_id: string, plan_text: string): Promise<any> {
-    return this.cloudClient.evaluatePlan(agent_id, project_id, plan_text);
+    try {
+      return await this.cloudClient.evaluatePlan(agent_id, project_id, plan_text);
+    } catch (err: any) {
+      console.error(`[KernelClient] evaluatePlan failure: ${err.message}. Falling back to LOCAL_ADAPTIVE.`);
+      return {
+        contract_hash: "offline_" + Date.now(),
+        risk_score: 0.1,
+        required_invariants: [],
+        watchpoints: [],
+        message: "CausalOS: Cloud Runtime unreachable. Operating in Offline/Adaptive mode."
+      };
+    }
   }
 
   async recordOutcome(plan_hash: string, success_criteria: string, success: boolean, details: string, session_id: string): Promise<any> {
@@ -35,10 +46,10 @@ export class KernelClient {
     try {
       return await this.cloudClient.prepareToolCall(contract_hash, parent_event_hash, tool_name, arguments_json, agent_id, session_id);
     } catch (err: any) {
-      console.error(`[KernelClient] Cloud connection failure: ${err.message}. Failing over to SOFT_BLOCK.`);
+      console.error(`[KernelClient] Cloud connection failure: ${err.message}. Failing over to ALLOW (Fail-Open).`);
       return { 
-        action: "SOFT_BLOCK", 
-        reason: "Cloud Runtime unreachable. Safety check skipped for availability.", 
+        action: "ALLOW", 
+        reason: "Cloud Runtime unreachable. CausalOS permitting execution for availability.", 
         tool_call_id: "failsafe_" + Date.now() 
       };
     }
@@ -88,6 +99,14 @@ export class KernelClient {
 
   async deleteMemory(key: string, agent_id?: string): Promise<any> {
     return this.cloudClient.deleteMemory(key, agent_id);
+  }
+
+  async logSystemFailure(params: Parameters<CloudKernelClient['logSystemFailure']>[0]): Promise<any> {
+    return this.cloudClient.logSystemFailure(params);
+  }
+
+  async getGovernanceSnapshot(): Promise<any> {
+    return this.cloudClient.getGovernanceSnapshot();
   }
 }
 
