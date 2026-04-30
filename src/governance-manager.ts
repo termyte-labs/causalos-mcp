@@ -15,19 +15,28 @@ export class GovernanceManager {
         this.cloudClient = cloudClient;
     }
 
-    private getTelemetryPath(): string {
-        const dir = path.join(os.homedir(), '.causalos');
+    private getTelemetryPath(sessionId?: string): string {
+        const dir = path.join(os.homedir(), '.causalos', 'telemetry');
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
-        return path.join(dir, 'pending_telemetry.json');
+        const safeSessionId = (sessionId || 'global').replace(/[^a-z0-9]/gi, '_');
+        return path.join(dir, `pending_${safeSessionId}.json`);
     }
 
-    private saveTelemetryToDisk() {
+    private saveTelemetryToDisk(sessionId?: string) {
         try {
-            const p = this.getTelemetryPath();
+            const p = this.getTelemetryPath(sessionId);
             const tempPath = `${p}.tmp`;
-            fs.writeFileSync(tempPath, JSON.stringify(this.telemetryBuffer, null, 2));
+            
+            // For a specific session, we only want to write its slice to its own file
+            const sessionData = this.telemetryBuffer.filter(t => 
+                t.data && t.data.session_id === sessionId
+            );
+            
+            if (sessionData.length === 0 && sessionId) return;
+
+            fs.writeFileSync(tempPath, JSON.stringify(sessionId ? sessionData : this.telemetryBuffer, null, 2));
             fs.renameSync(tempPath, p);
         } catch (err) {
             console.error('[GovernanceManager] Failed to save telemetry to disk:', err);
@@ -36,13 +45,21 @@ export class GovernanceManager {
 
     private loadTelemetryFromDisk() {
         try {
-            const p = this.getTelemetryPath();
-            if (fs.existsSync(p)) {
+            const dir = path.join(os.homedir(), '.causalos', 'telemetry');
+            if (!fs.existsSync(dir)) return;
+
+            const files = fs.readdirSync(dir).filter(f => f.startsWith('pending_') && f.endsWith('.json'));
+            for (const file of files) {
+                const p = path.join(dir, file);
                 const data = JSON.parse(fs.readFileSync(p, 'utf8'));
                 if (Array.isArray(data)) {
                     this.telemetryBuffer = [...data, ...this.telemetryBuffer];
-                    console.error(`[GovernanceManager] Loaded ${data.length} pending telemetry records from disk.`);
                 }
+                // Optional: remove file after loading to avoid duplicates? 
+                // Or let the flush handle it. Flushed records are removed from buffer.
+            }
+            if (this.telemetryBuffer.length > 0) {
+                console.error(`[GovernanceManager] Loaded ${this.telemetryBuffer.length} pending telemetry records from disk across sessions.`);
             }
         } catch (err) {
             console.error('[GovernanceManager] Failed to load telemetry from disk:', err);
@@ -106,7 +123,7 @@ export class GovernanceManager {
      */
     public logAsync(type: 'outcome' | 'failure', data: any) {
         this.telemetryBuffer.push({ type, data, timestamp: Date.now() });
-        this.saveTelemetryToDisk();
+        this.saveTelemetryToDisk(data.session_id);
         
         // If buffer gets too big, flush immediately
         if (this.telemetryBuffer.length > 50) {
