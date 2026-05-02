@@ -1,13 +1,14 @@
 {
-  "name": "causalos-mcp",
-  "version": "3.2.0",
+  "name": "causalos",
+  "version": "0.1.0",
   "description": "Dual Memory Agent Runtime: Causal Graph Engine + General Memory + Forward Simulation + Backward Inference for AI Agents",
   "main": "dist/index.js",
   "bin": {
-    "causalos-mcp": "dist/index.js"
+    "causalos": "dist/index.js"
   },
   "type": "module",
   "scripts": {
+    
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc --watch",

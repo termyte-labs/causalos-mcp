@@ -2,40 +2,28 @@
 
 All notable changes to the CausalOS project will be documented in this file.
 
-## [3.1.1] - 2026-04-29
+## [0.1.0] - 2026-05-02
+
+### 🛡️ Security Hardening & Rebranding
+This version marks the official transition to **CausalOS** (formerly `causalos-mcp`) and introduces a hardened execution environment for AI agents.
 
 ### Added
-- **Automated Failure Tracking**: Implemented `withFailureTracking` middleware to automatically capture tool crashes and errors.
-- **Robust Error Context**: Enhanced logging with redacted arguments, stack traces, and session-aware metadata.
-- **System Failure Logging**: Added `logSystemFailure` to the Cloud Kernel Client for recording exceptions in the Causal Ledger.
-- **Manual Logging Tool**: Registered `log_failure` tool for explicit agent-triggered error reporting.
-- **Cloud Failover**: Improved reliability with consistent default URLs and error handling for cloud connectivity.
-
-### Fixed
-- **Tool Wrapping Consistency**: Refactored all tool registrations to use the correct middleware pattern, fixing type errors and ensuring 100% coverage for failure tracking.
-- **TypeScript Configuration**: Resolved `rootDir` conflicts by excluding `scratch/` from the build process.
-
-## [2.0.0] - 2026-04-20
-
-
-### 🚀 Major Architectural Shift: The Split-Plane Unification
-
-CausalOS V2 represents a complete re-imagining of the agent governance layer. We have moved from a standalone Node.js MCP server to a high-performance **Split-Plane Architecture** that separates intelligence from implementation.
-
-### Added
-- **Rust Control Plane**: Introduced `causalos-runtime`, a high-performance governance kernel written in Rust.
-- **gRPC Bridge**: Refactored the `causalos-mcp` into a thin gRPC proxy that communicates with the kernel on port `50051`.
-- **Causal Ledger (Binary DAG)**: Migrated memory storage to a custom binary ledger for deterministic, linked trajectory storage.
-- **2-Phase Commit (2PC) Protocol**: Implemented mandatory `Prepare` and `Commit` cycles for all critical tool calls.
-- **Plan Contracts**: Agents now receive "Contracts" with required invariants at the start of every task.
-- **Mintlify Documentation**: Brand new documentation suite focusing on the Split-Plane architecture and institutional safety.
+- **CommandSandbox**: Replaced insecure regex filtering with a robust, explicit allowlist-based execution gate.
+  - **Explicit Allowlist**: Only 27 approved binaries (e.g., `ls`, `git`, `npm`, `cargo`, `curl`) are permitted with specific justifications.
+  - **Encoding Bypass Detection**: Integrated pre-scan logic to decode and validate Base64 and URL-encoded payloads *before* execution.
+  - **Interpreter Blocking**: Unconditional blocklist for dangerous interpreters (`python -c`, `node -e`, `bash -c`, `perl`, `ruby`, etc.) to prevent sandbox escapes.
+  - **Shell Metacharacter Rejection**: Blocks pipes, redirects, and substitutions at the validation layer.
+  - **Direct Execution**: Switched from `exec()` to `execFile()` to neutralize shell injection at the OS level.
+- **Fail-Closed Governance**: Modified the MCP bridge to fail-closed (`SOFT_BLOCK`) when the Cloud Runtime is unreachable, ensuring governance integrity by default.
+- **Enhanced Telemetry Persistence**: Added session-aware telemetry buffering that persists pending records to `~/.causalos/telemetry/` during network outages.
 
 ### Changed
-- **Versioning**: Unified all components (`mcp`, `runtime`, `sdk`) to version `2.0.0`.
-- **System Prompt**: Updated the "Golden System Prompt" to enforce the V2 governance protocol.
-- **Tooling**: Streamlined tools into `context_build` (V2), `causal_check` (V2), `causal_record` (V2), and `causal_history`.
+- **Rebranding**: Project renamed from `causalos-mcp` to `causalos`.
+- **Infrastructure**: Updated default `CAUSAL_RUNTIME_URL` to `https://mcp.causalos.xyz/`.
+- **Console Feedback**: Professionalized startup logs to display Governance status (Offline-Resilient) and Telemetry mode (Async-Batched).
 
-### Removed
-- **Legacy V1 Dependencies**: Removed `better-sqlite3`, `sql.js`, and `natural` from the MCP bridge.
-- **Local SQL Database**: Removed `~/.causalos/memory.db` in favor of the Causal Ledger.
-- **Legacy Code**: Deleted 5,000+ lines of unused Node.js implementation logic (`db.ts`, `anchors.ts`, `sweeper.ts`, etc.).
+### Fixed
+- **Offline Resilience Suite**: Resolved pre-existing test failures in the governance layer where telemetry paths and expectations were inconsistent with the hardened implementation.
+- **Build Integrity**: Fixed issues where stale build artifacts in `dist/` caused test discovery errors.
+
+---

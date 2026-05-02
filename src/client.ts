@@ -21,10 +21,10 @@ export class KernelClient {
       console.error(`[KernelClient] evaluatePlan failure: ${err.message}. Falling back to LOCAL_ADAPTIVE.`);
       return {
         contract_hash: "offline_" + Date.now(),
-        risk_score: 0.1,
+        risk_score: 0.5,
         required_invariants: [],
         watchpoints: [],
-        message: "CausalOS: Cloud Runtime unreachable. Operating in Offline/Adaptive mode."
+        message: "CausalOS: Cloud Runtime unreachable. Risk score set to neutral 0.5 — no historical data available."
       };
     }
   }
@@ -46,11 +46,11 @@ export class KernelClient {
     try {
       return await this.cloudClient.prepareToolCall(contract_hash, parent_event_hash, tool_name, arguments_json, agent_id, session_id);
     } catch (err: any) {
-      console.error(`[KernelClient] Cloud connection failure: ${err.message}. Failing over to ALLOW (Fail-Open).`);
-      return { 
-        action: "ALLOW", 
-        reason: "Cloud Runtime unreachable. CausalOS permitting execution for availability.", 
-        tool_call_id: "failsafe_" + Date.now() 
+      console.error(`[KernelClient] Cloud connection failure: ${err.message}. Failing closed for governance safety.`);
+      return {
+          action: "SOFT_BLOCK",
+          reason: "Cloud Runtime unreachable. Cannot verify governance. Action blocked for safety.",
+          tool_call_id: "failsafe_" + Date.now()
       };
     }
   }

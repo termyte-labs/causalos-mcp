@@ -14,7 +14,7 @@ CausalOS is designed to be run via `npx` for zero-configuration setup.
 ### Global Installation (Optional)
 If you prefer to install it globally:
 ```bash
-npm install -g causalos-mcp
+npm install -g causalos
 ```
 
 ## Configuration
@@ -28,9 +28,9 @@ Add the following entry:
 ```json
 {
   "mcpServers": {
-    "causalos-mcp": {
+    "causalos": {
       "command": "npx",
-      "args": ["-y", "causalos-mcp"]
+      "args": ["-y", "causalos"]
     }
   }
 }

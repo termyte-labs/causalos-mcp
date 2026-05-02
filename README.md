@@ -39,7 +39,7 @@ Add your API key to the environment variables:
   "mcpServers": {
     "causalos": {
       "command": "npx",
-      "args": ["-y", "causalos-mcp"],
+      "args": ["-y", "causalos"],
       "env": {
         "CAUSAL_API_KEY": "sk-your-key-here"
       }
@@ -65,7 +65,7 @@ Update your `claude_desktop_config.json`:
   "mcpServers": {
     "causalos": {
       "command": "npx",
-      "args": ["-y", "causalos-mcp"],
+      "args": ["-y", "causalos"],
       "env": {
         "CAUSAL_RUNTIME_HOST": "localhost:50051"
       }

@@ -50,14 +50,14 @@ describe('Offline Resilience', () => {
         vi.spyOn(kernel.cloudClient, 'prepareToolCall').mockRejectedValue(new Error('Network Down'));
 
         const verdict = await kernel.prepareToolCall('hash', 'parent', 'tool', '{}', 'agent', 'session');
-        expect(verdict.action).toBe('ALLOW');
+        expect(verdict.action).toBe('SOFT_BLOCK');
         expect(verdict.tool_call_id).toContain('failsafe_');
     });
 
     it('should persist telemetry to disk when cloud is down', async () => {
         vi.spyOn(kernel.cloudClient, 'logSystemFailure').mockRejectedValue(new Error('Network Down'));
         
-        const telemetryPath = path.join(os.homedir(), '.causalos', 'pending_telemetry.json');
+        const telemetryPath = path.join(os.homedir(), '.causalos', 'telemetry', 'pending_s1.json');
         if (fs.existsSync(telemetryPath)) fs.unlinkSync(telemetryPath);
 
         govManager.logAsync('failure', { session_id: 's1', label: 'L1', error_message: 'E1' });

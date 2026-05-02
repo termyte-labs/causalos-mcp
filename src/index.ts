@@ -2,20 +2,25 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { exec } from "child_process";
-import { promisify } from "util";
+// NOTE: raw exec/execAsync is intentionally removed from this module.
+// All shell execution must flow through CommandSandbox.sandboxExec,
+// which enforces the command allowlist and encoding-bypass detection.
+import { sandboxExec } from "./command-sandbox.js";
 import { kernel } from "./client.js";
 import { Sanitizer } from "./sanitizer.js";
 import { HotCache } from "./cache.js";
 import { GovernanceManager } from "./governance-manager.js";
 import axios from "axios";
+import * as fs from "fs/promises";
+import * as path from "path";
 
-const execAsync = promisify(exec);
+
+// execAsync deliberately removed — use sandboxExec from command-sandbox.ts.
 
 // ─── Server ───────────────────────────────────────────────────────────────────
 const server = new McpServer({
-  name: "causalos-mcp",
-  version: "3.2.0",
+  name: "causalos",
+  version: "0.1.0",
 });
 
 const govManager = new GovernanceManager(kernel.cloudClient);
@@ -221,6 +226,19 @@ server.registerTool(
   },
   withFailureTracking(async ({ tool_name, arguments: args, contract_hash, parent_event_hash, session_id }: any) => {
     try {
+      // 0. LOCAL GOVERNANCE CHECK (Zero Latency)
+      const fingerprint = Sanitizer.getFingerprint(tool_name, args);
+      const localVerdict = govManager.checkAction(fingerprint);
+      
+      if (localVerdict && (localVerdict.recommendation === "ABORT" || (localVerdict as any).verdict === "BLOCK")) {
+        console.error(`[CausalOS] HARD_BLOCK: Local match prevents execution of ${tool_name}`);
+        await sendSlackAlert(`Prevented execution of ${tool_name} due to LOCAL_BLOCK: ${localVerdict.reason}`);
+        return {
+          content: [{ type: "text", text: `CausalOS LOCAL_BLOCK: Execution denied. Reason: ${localVerdict.reason}` }],
+          isError: true
+        };
+      }
+
       // 1. PREPARE (Gated by Kernel)
       // Note: We send REDACTED data to the kernel for long-term storage safety
       const redactedArgs = Sanitizer.redact(args);
@@ -247,14 +265,75 @@ server.registerTool(
 
       try {
         if (tool_name === "run_command" || tool_name === "shell") {
-            const { stdout, stderr } = await execAsync(args.command || args);
-            outcome = { stdout, stderr };
+            // ── Hardened execution path ─────────────────────────────────────────
+            // sandboxExec enforces:
+            //   1. Explicit command allowlist — unknown verbs → PermissionDenied
+            //   2. Interpreter bypass blocking (python -c, node -e, bash -c, …)
+            //   3. Encoding bypass pre-scan (base64 / URL-encoded payloads decoded
+            //      and checked BEFORE the raw string is evaluated)
+            //   4. Shell metacharacter rejection (pipe, redirect, backtick, …)
+            //   5. execFile (not exec) — OS never invokes a shell
+            const rawCommand: string = typeof args === "string" ? args : (args.command ?? "");
+
+            if (!rawCommand.trim()) {
+                success = false;
+                outcome = { error: "PermissionDenied: empty command string." };
+            } else {
+                const sandboxResult = await sandboxExec(rawCommand);
+
+                if (!sandboxResult.allowed) {
+                    // Hard block — do not execute, return structured denial
+                    success = false;
+                    outcome = {
+                        error: `PermissionDenied [${sandboxResult.blocked_by}]: ${sandboxResult.reason}`,
+                        blocked_by: sandboxResult.blocked_by,
+                    };
+                    // Escalate hard blocks to Slack (same channel as HARD_BLOCK)
+                    await sendSlackAlert(
+                        `causalos_execute SANDBOX_BLOCK\n` +
+                        `Command: ${rawCommand.slice(0, 200)}\n` +
+                        `Reason: ${sandboxResult.reason}`
+                    );
+                } else {
+                    outcome = {
+                        stdout: sandboxResult.stdout,
+                        stderr: sandboxResult.stderr,
+                        exit_code: sandboxResult.exit_code,
+                    };
+                    if (sandboxResult.exit_code !== 0) success = false;
+                }
+            }
+        } else if (tool_name === "write_file" || tool_name === "write_to_file" || tool_name === "create_file") {
+            const filePath = args.path || args.file_path || args.TargetFile;
+            const content = args.content || args.CodeContent || "";
+            if (!filePath) throw new Error("Missing 'path' or 'file_path' in arguments.");
+            
+            const fullPath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
+            await fs.mkdir(path.dirname(fullPath), { recursive: true });
+            await fs.writeFile(fullPath, content, "utf-8");
+            outcome = { status: "executed", file: fullPath, bytes: content.length };
+        } else if (tool_name === "replace" || tool_name === "replace_file_content") {
+            const filePath = args.file_path || args.path || args.TargetFile;
+            const target = args.target || args.TargetContent;
+            const replacement = args.replacement || args.ReplacementContent;
+            if (!filePath || !target) throw new Error("Missing 'file_path' or 'target' in arguments.");
+
+            const fullPath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
+            const data = await fs.readFile(fullPath, "utf-8");
+            const updated = data.replace(target, replacement);
+            await fs.writeFile(fullPath, updated, "utf-8");
+            outcome = { status: "executed", file: fullPath, operation: "string_replace" };
+        } else if (tool_name === "mkdir") {
+            const dirPath = args.path || args.dir_path;
+            if (!dirPath) throw new Error("Missing 'path' in arguments.");
+            const fullPath = path.isAbsolute(dirPath) ? dirPath : path.join(process.cwd(), dirPath);
+            await fs.mkdir(fullPath, { recursive: true });
+            outcome = { status: "executed", directory: fullPath };
         } else {
-            // Attempt to resolve the tool from the server's own registry for generic proxying
-            // In a real production setup, this would use the internal SDK dispatcher.
-            // For now, we simulate success for non-shell tools to avoid breaking the chain.
-            outcome = { status: "executed", message: `Tool '${tool_name}' proxied through broker successfully.` };
+            success = false;
+            outcome = { status: "UNSUPPORTED_TOOL", message: `Tool '${tool_name}' is not implemented. Execution refused.` };
         }
+
       } catch (err: any) {
         success = false;
         outcome = { error: err.message };
@@ -686,9 +765,9 @@ server.registerTool(
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  const runtimeUrl = process.env.CAUSAL_RUNTIME_URL || 'https://cloud-runtime-production.up.railway.app';
+  const runtimeUrl = process.env.CAUSAL_RUNTIME_URL || 'https://mcp.causalos.xyz/';
   
-  console.error(`CausalOS MCP v3.2.0 running — LOCAL_FIRST MODE`);
+  console.error(`CausalOS MCP v0.1.0 running — LOCAL_FIRST MODE`);
   console.error(`Runtime URL: ${runtimeUrl}`);
   console.error(`Governance: Offline-Resilient | Telemetry: Async-Batched`);
   
