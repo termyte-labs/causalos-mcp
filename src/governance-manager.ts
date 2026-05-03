@@ -51,15 +51,26 @@ export class GovernanceManager {
             const files = fs.readdirSync(dir).filter(f => f.startsWith('pending_') && f.endsWith('.json'));
             for (const file of files) {
                 const p = path.join(dir, file);
-                const data = JSON.parse(fs.readFileSync(p, 'utf8'));
-                if (Array.isArray(data)) {
-                    this.telemetryBuffer = [...data, ...this.telemetryBuffer];
+                try {
+                    const content = fs.readFileSync(p, 'utf8');
+                    if (!content) {
+                        fs.unlinkSync(p);
+                        continue;
+                    }
+                    const data = JSON.parse(content);
+                    if (Array.isArray(data)) {
+                        this.telemetryBuffer = [...this.telemetryBuffer, ...data];
+                    }
+                    fs.unlinkSync(p); // Delete after successful load
+                } catch (e) {
+                    // If file is corrupt, move it to .bak or delete
+                    console.error(`[GovernanceManager] Corrupt telemetry file ${file}, removing:`, e);
+                    fs.unlinkSync(p);
                 }
-                // Optional: remove file after loading to avoid duplicates? 
-                // Or let the flush handle it. Flushed records are removed from buffer.
             }
             if (this.telemetryBuffer.length > 0) {
-                console.error(`[GovernanceManager] Loaded ${this.telemetryBuffer.length} pending telemetry records from disk across sessions.`);
+                this.saveTelemetryToDisk(); // Consolidate into global file
+                console.error(`[GovernanceManager] Recovered ${this.telemetryBuffer.length} pending telemetry records.`);
             }
         } catch (err) {
             console.error('[GovernanceManager] Failed to load telemetry from disk:', err);
@@ -137,7 +148,9 @@ export class GovernanceManager {
         // Take a snapshot of the current buffer to flush
         const batch = [...this.telemetryBuffer];
         this.telemetryBuffer = [];
-        this.saveTelemetryToDisk(); // Update disk with empty buffer
+        
+        // We don't call saveTelemetryToDisk() yet to avoid writing an empty file 
+        // if we are about to re-queue failures anyway.
 
         console.error(`[GovernanceManager] Flushing ${batch.length} telemetry records to cloud...`);
         
@@ -153,7 +166,7 @@ export class GovernanceManager {
                     }
                 }
             } catch (err: any) {
-                console.error('[GovernanceManager] Telemetry flush error:', err.message);
+                console.error(`[GovernanceManager] Flush error for ${record.type}:`, err.message);
                 failedRecords.push(record);
             }
         }
@@ -161,8 +174,10 @@ export class GovernanceManager {
         if (failedRecords.length > 0) {
             console.error(`[GovernanceManager] ${failedRecords.length} records failed to flush. Re-queueing.`);
             this.telemetryBuffer = [...failedRecords, ...this.telemetryBuffer];
-            this.saveTelemetryToDisk();
         }
+        
+        // Always sync the final state (empty or with failures) back to disk
+        this.saveTelemetryToDisk();
     }
 
     public stop() {

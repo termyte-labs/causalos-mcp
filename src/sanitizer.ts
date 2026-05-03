@@ -69,9 +69,44 @@ export class Sanitizer {
    * Matches the format used in the Cloud Runtime: tool_name:sanitized_args_json
    */
   public static getFingerprint(toolName: string, args: any): string {
-    const sanitizedArgs = this.redact(args);
+    let sanitizedArgs = this.redact(args);
+    
+    // Phase 3: Command Normalization for shell tools
+    if (["run_command", "shell", "run_shell_command"].includes(toolName)) {
+      sanitizedArgs = this.normalizeShellArgs(sanitizedArgs);
+    }
+
     const argsJson = JSON.stringify(sanitizedArgs);
     const canonical = `${toolName}:${argsJson}`;
     return createHash('sha256').update(canonical).digest('hex');
+  }
+
+  private static normalizeShellArgs(args: any): any {
+    if (typeof args === 'string') return this.normalizeCommandString(args);
+    if (typeof args === 'object' && args !== null) {
+      if (args.command) {
+        return { ...args, command: this.normalizeCommandString(args.command) };
+      }
+    }
+    return args;
+  }
+
+  private static normalizeCommandString(cmd: string): string {
+    const trimmed = cmd.trim();
+    if (!trimmed) return cmd;
+
+    const parts = trimmed.split(/\s+/);
+    if (parts.length <= 1) return trimmed;
+
+    const verb = parts[0];
+    const rest = parts.slice(1);
+
+    // Separate flags (start with -) from positional arguments
+    // Note: This is a heuristic. Some tools use - for non-flags, but for fingerprinting it's usually fine.
+    const flags = rest.filter(p => p.startsWith('-')).sort();
+    const nonFlags = rest.filter(p => !p.startsWith('-'));
+
+    // Reconstruct canonical command
+    return [verb, ...flags, ...nonFlags].join(' ');
   }
 }

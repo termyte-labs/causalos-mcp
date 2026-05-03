@@ -160,7 +160,11 @@ server.registerTool(
   withFailureTracking(async ({ action, action_type, contract_hash, parent_event_hash, session_id, strict_mode }: any) => {
     try {
       // 1. Local Heuristic Safety Check (Raw Data)
-      const sensitivePatterns = ["rm -rf", "drop table", "delete", "chmod", "> /dev/", "mkfs"];
+      const sensitivePatterns = [
+        "rm -rf", "drop table", "delete ", "chmod", "> /dev/", "mkfs",
+        "sudo ", "./", "/*", "eval ", "curl", "wget", "systemctl", "service ",
+        "passwd", "shadow", "kill -9", "pkill", "dd if=", "nc -e", "bash -i"
+      ];
       const isSensitivePattern = sensitivePatterns.some(p => action.toLowerCase().includes(p));
       const sensitiveTools = ["run_command", "shell", "run_shell_command", "write_file", "write_to_file", "create_file", "delete_file"];
       const isSensitiveTool = sensitiveTools.includes(action_type);
