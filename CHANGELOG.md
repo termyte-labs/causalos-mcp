@@ -2,6 +2,25 @@
 
 All notable changes to the CausalOS project will be documented in this file.
 
+## [1.0.0] - 2026-05-04
+
+### Breaking
+- Unified governance verdict policy across MCP + cloud-runtime:
+  - Production fails closed (`UNCERTAIN -> BLOCK`)
+  - Development returns escalation (`UNCERTAIN`)
+- Removed implicit auth fallback (`DEV_BYPASS`) from cloud client headers.
+- Added API aliases and canonical docs alignment for:
+  - `context/build`, `governance/check`, `ledger/record`
+
+### Added
+- Contract tests for cloud endpoint calls.
+- E2E smoke stack (`e2e/docker-compose.yml`) with runtime + postgres + smoke runner.
+- Runtime policy docs and API docs.
+
+### Fixed
+- Version reporting drift in MCP runtime logs.
+- Command sandbox tokenization and Windows shell hard-disable for security.
+
 ## [0.1.0] - 2026-05-02
 
 ### 🛡️ Security Hardening & Rebranding

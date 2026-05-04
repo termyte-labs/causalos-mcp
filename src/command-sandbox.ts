@@ -333,14 +333,29 @@ function tokenize(command: string): string[] {
   const tokens: string[] = [];
   let current = "";
   let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let escaping = false;
 
   for (let i = 0; i < command.length; i++) {
     const ch = command[i];
-    if (ch === "'" && !inSingleQuote) {
+    if (escaping) {
+      current += ch;
+      escaping = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaping = true;
+      continue;
+    }
+    if (ch === "'" && !inSingleQuote && !inDoubleQuote) {
       inSingleQuote = true;
-    } else if (ch === "'" && inSingleQuote) {
+    } else if (ch === "'" && inSingleQuote && !inDoubleQuote) {
       inSingleQuote = false;
-    } else if (ch === " " && !inSingleQuote) {
+    } else if (ch === "\"" && !inSingleQuote && !inDoubleQuote) {
+      inDoubleQuote = true;
+    } else if (ch === "\"" && inDoubleQuote && !inSingleQuote) {
+      inDoubleQuote = false;
+    } else if (ch === " " && !inSingleQuote && !inDoubleQuote) {
       if (current.length > 0) {
         tokens.push(current);
         current = "";
@@ -461,6 +476,14 @@ export function validateCommand(rawCommand: string): SandboxDenial | null {
  * validation layer above.
  */
 export async function sandboxExec(rawCommand: string, timeoutMs = 30_000): Promise<SandboxOutcome> {
+  if (process.platform === "win32") {
+    return {
+      allowed: false,
+      reason: "Windows shell execution is disabled in this release. Use dedicated file/search/build tools instead.",
+      blocked_by: "NOT_IN_ALLOWLIST",
+    };
+  }
+
   // Validate first
   const denial = validateCommand(rawCommand);
   if (denial) return denial;
@@ -476,7 +499,7 @@ export async function sandboxExec(rawCommand: string, timeoutMs = 30_000): Promi
       timeout: timeoutMs,
       maxBuffer: 10 * 1024 * 1024, // 10 MB max output
       windowsHide: true,
-      shell: process.platform === "win32", // Enable shell on Windows to resolve .cmd/.bat
+      shell: false,
     });
     return { allowed: true, stdout, stderr, exit_code: 0 };
   } catch (err: any) {

@@ -10,7 +10,7 @@ export class Sanitizer {
   private static SECRET_PATTERNS: Record<string, RegExp> = {
     // Standard cloud/service tokens
     AWS_KEY: /(?:ASIA|AKIA|AROA|AIDA)[A-Z0-9]{16}/g,
-    AWS_SECRET: /(?:"|')?[a-zA-Z0-9+/]{40}(?:"|')?/g, 
+    AWS_SECRET: /(?:aws_secret_access_key|aws_secret)\s*[:=]\s*(?:"|')?[A-Za-z0-9/+=]{40}(?:"|')?/gi,
     STRIPE_KEY: /sk_live_[0-9a-zA-Z]{24}/g,
     GITHUB_TOKEN: /(?:ghp|gho|ghu|ghs|ghr)_[a-zA-Z0-9]{36}/g,
     SLACK_TOKEN: /xox[baprs]-[0-9a-zA-Z]{10,48}/g,

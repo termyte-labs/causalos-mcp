@@ -1,17 +1,14 @@
 # CausalOS MCP
 
-> **"Don't just remember the past. Use it to change the future."**
+Bridge server that exposes CausalOS governance and memory tools through MCP.
 
-CausalOS is a **local-first decision intelligence layer** for AI agents. It transforms agents from stateless workers into learning systems that get measurably better with every run.
+## Architecture
 
-## Why CausalOS?
-
-Stateless agents often repeat the same mistakes. Even with a large context window, they lack a persistent "muscle memory" for what works and what fails in your specific environment.
-
-CausalOS fixes this by:
-1.  **Injecting Context**: Surfacing relevant past failures and success patterns *before* the agent acts.
-2.  **Closing the Loop**: Capturing hybrid signals (system exit codes, user interruptions, agent self-reports) to learn from outcomes.
-3.  **Adaptive Reasoning**: Providing instruction patches that force agents to avoid known pitfalls.
+- Cloud-first control plane (`cloud-runtime`) stores ledger, causal graph, and memory.
+- Local bridge performs redaction and command sandboxing.
+- Local resilience data is stored under `~/.causalos/`:
+  - `governance_cache.json`
+  - `telemetry/pending_*.json`
 
 ## Quick Start
 
@@ -36,7 +33,7 @@ Add CausalOS to your `claude_desktop_config.json`:
 ```
 
 ### 3. Start Learning
-Once configured, your agent will automatically start building a local causal graph at `~/.causalos/memory.db`.
+Once configured, your agent can call CausalOS tools and persist outcomes into the cloud ledger.
 
 ---
 

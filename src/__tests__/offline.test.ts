@@ -11,9 +11,6 @@ describe('Offline Resilience', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
-        // Clear HotCache
-        // @ts-ignore
-        HotCache.cache.clear();
         govManager = new GovernanceManager(kernel.cloudClient);
     });
 

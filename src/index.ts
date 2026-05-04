@@ -10,21 +10,27 @@ import { kernel } from "./client.js";
 import { Sanitizer } from "./sanitizer.js";
 import { HotCache } from "./cache.js";
 import { GovernanceManager } from "./governance-manager.js";
+import { applyUnifiedPolicy, normalizeVerdict, recommendationFor } from "./policy.js";
 import axios from "axios";
 import * as fs from "fs/promises";
 import * as path from "path";
 
 
 // execAsync deliberately removed — use sandboxExec from command-sandbox.ts.
+const MCP_VERSION = process.env.npm_package_version || "0.1.2";
+function logJson(level: "info" | "error", event: string, fields: Record<string, unknown> = {}) {
+  const record = { level, event, ts: new Date().toISOString(), ...fields };
+  console.error(JSON.stringify(record));
+}
 
 // ─── Server ───────────────────────────────────────────────────────────────────
 const server = new McpServer({
   name: "causalos",
-  version: "0.1.0",
+  version: MCP_VERSION,
 });
 
 const govManager = new GovernanceManager(kernel.cloudClient);
-govManager.initialize().catch(err => console.error("[CausalOS] Governance Initialization Failed:", err));
+govManager.initialize().catch(err => logJson("error", "governance_init_failed", { message: String(err) }));
 
 // ─── Tool 1: context_build (V2 — Kernel Evaluation) ───────────────────────────
 server.registerTool(
@@ -102,7 +108,7 @@ async function sendSlackAlert(message: string) {
       }),
     });
   } catch (err) {
-    console.error("Failed to send Slack alert:", err);
+    logJson("error", "slack_alert_failed", { message: String(err) });
   }
 }
 
@@ -124,7 +130,7 @@ function withFailureTracking(handler: any, toolName: string) {
       }
       return result;
     } catch (error: any) {
-      console.error(`[CausalOS] Automated Failure Capture: ${toolName} failed:`, error.message);
+      logJson("error", "tool_crash", { tool: toolName, message: error.message });
       
       // Log the crash to the Causal Ledger asynchronously
       govManager.logAsync('failure', {
@@ -159,56 +165,53 @@ server.registerTool(
   },
   withFailureTracking(async ({ action, action_type, contract_hash, parent_event_hash, session_id, strict_mode }: any) => {
     try {
-      // 1. Local Heuristic Safety Check (Raw Data)
-      const sensitivePatterns = [
-        "rm -rf", "drop table", "delete ", "chmod", "> /dev/", "mkfs",
-        "sudo ", "eval ", "curl", "wget", "systemctl", "service ",
-        "passwd", "shadow", "kill -9", "pkill", "dd if=", "nc -e", "bash -i"
-      ];
-      const isSensitivePattern = sensitivePatterns.some(p => action.toLowerCase().includes(p));
-      const sensitiveTools = ["run_command", "shell", "run_shell_command", "write_file", "write_to_file", "create_file", "delete_file"];
-      const isSensitiveTool = sensitiveTools.includes(action_type);
-      const isSensitive = isSensitivePattern || isSensitiveTool;
-      
-      // 2. Check Local Governance Engine (Zero Latency)
+      // 1. Check Local Governance Engine (Zero Latency)
       const fingerprint = Sanitizer.getFingerprint(action_type, { action });
       const localVerdict = govManager.checkAction(fingerprint);
 
       if (localVerdict) {
-        console.error(`[CausalOS] Local Match Found: ${localVerdict.recommendation} (Confidence: ${localVerdict.confidence})`);
+        const localAction = localVerdict.recommendation === "ABORT" ? "BLOCK" : "ALLOW";
+        const finalAction = applyUnifiedPolicy(normalizeVerdict(localAction));
         return {
           content: [{
             type: "text",
             text: JSON.stringify({
-              ...localVerdict,
+              verdict: finalAction,
+              recommendation: recommendationFor(finalAction),
+              confidence: localVerdict.confidence,
+              risk_score: localVerdict.risk_score,
+              reason: localVerdict.reason,
               source: "LOCAL_ENGINE",
-              message: `Local Governance: ${localVerdict.recommendation}. Reason: ${localVerdict.reason}`
+              message: `Local Governance (${finalAction}): ${localVerdict.reason}`
             }, null, 2)
           }]
         };
       }
 
-      // 3. Local MISS -> Handle based on Strict Mode
-      if (strict_mode || isSensitive) {
-        const response = {
-          verdict: "BLOCK",
-          reason: "Conservative Fail-Closed: Unseen pattern in strict mode or sensitive command detected.",
-          recommendation: "ABORT",
-          source: "LOCAL_FAIL_CLOSED",
-          message: "CausalOS: Action blocked due to zero-trust safety policy. Please record a manual success if this is intentional.",
-        };
-        return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }] };
-      }
-
-      // Fail-Open but record for learning
+      // 2. Fallback to kernel-based governance check.
+      const verdict = await kernel.prepareToolCall(
+        contract_hash || "root",
+        parent_event_hash || "init",
+        action_type,
+        JSON.stringify({ action, strict_mode: !!strict_mode }),
+        "default_agent",
+        session_id || "adhoc_session"
+      );
+      const normalized = normalizeVerdict(
+        verdict?.action === "ALLOW"
+          ? "ALLOW"
+          : verdict?.action === "BLOCK"
+            ? "BLOCK"
+            : "UNCERTAIN"
+      );
+      const finalAction = applyUnifiedPolicy(normalized);
       const response = {
-        verdict: "ALLOW",
-        reason: "Unknown pattern. Permitting in advisory mode.",
-        recommendation: "PROCEED",
-        source: "LOCAL_FAIL_OPEN",
-        message: "CausalOS: Action permitted. Learning loop active.",
+        verdict: finalAction,
+        reason: verdict?.reason || "Kernel returned no reason",
+        recommendation: recommendationFor(finalAction),
+        source: "KERNEL_POLICY",
+        message: `CausalOS kernel verdict normalized to ${finalAction}.`,
       };
-
       return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }] };
     } catch (error: any) {
       return {
@@ -247,19 +250,31 @@ server.registerTool(
                                  safeShellCommands.some(cmd => rawCommand.trim().startsWith(cmd));
       
       if (!localVerdict && isSensitiveTool && !isSafeShellCommand) {
-        console.error(`[CausalOS] FAIL_CLOSED: Zero history for sensitive tool ${tool_name}`);
-        return {
-          content: [{ type: "text", text: `CausalOS BLOCK: Zero history for sensitive tool '${tool_name}'. Execution denied by default (Safety-by-Default).` }],
-          isError: true
-        };
+        const policyAction = applyUnifiedPolicy("UNCERTAIN");
+        if (policyAction !== "ALLOW") {
+          logJson("error", "fail_closed_sensitive_tool", { tool_name });
+          return {
+            content: [{ type: "text", text: `CausalOS ${policyAction}: Zero history for sensitive tool '${tool_name}'.` }],
+            isError: true
+          };
+        }
       }
 
       if (localVerdict && (localVerdict.recommendation === "ABORT" || (localVerdict as any).verdict === "BLOCK")) {
-        console.error(`[CausalOS] HARD_BLOCK: Local match prevents execution of ${tool_name}`);
-        await sendSlackAlert(`Prevented execution of ${tool_name} due to LOCAL_BLOCK: ${localVerdict.reason}`);
+        const policyAction = applyUnifiedPolicy("BLOCK");
+        if (policyAction === "BLOCK") {
+          logJson("error", "hard_block_local_match", { tool_name, reason: localVerdict.reason });
+          await sendSlackAlert(`Prevented execution of ${tool_name} due to LOCAL_BLOCK: ${localVerdict.reason}`);
+          return {
+            content: [{ type: "text", text: `CausalOS LOCAL_BLOCK: Execution denied. Reason: ${localVerdict.reason}` }],
+            isError: true
+          };
+        }
+      }
+
+      if (localVerdict && localVerdict.recommendation === "ABORT") {
         return {
-          content: [{ type: "text", text: `CausalOS LOCAL_BLOCK: Execution denied. Reason: ${localVerdict.reason}` }],
-          isError: true
+          content: [{ type: "text", text: `CausalOS ESCALATE: Local block downgraded in development mode for '${tool_name}'.` }],
         };
       }
 
@@ -275,7 +290,15 @@ server.registerTool(
         session_id || "adhoc_session"
       );
 
-      if (verdict.action !== "ALLOW" && verdict.action !== "AUDIT_REQUIRED") {
+      const normalizedKernelAction = normalizeVerdict(
+        verdict.action === "ALLOW" || verdict.action === "AUDIT_REQUIRED"
+          ? "ALLOW"
+          : verdict.action === "BLOCK"
+            ? "BLOCK"
+            : "UNCERTAIN"
+      );
+      const finalKernelAction = applyUnifiedPolicy(normalizedKernelAction);
+      if (finalKernelAction !== "ALLOW") {
         await sendSlackAlert(`Prevented execution of ${tool_name} due to ${verdict.action}: ${verdict.reason}`);
         return {
           content: [{ type: "text", text: `CausalOS BLOCK: Execution denied. Reason: ${verdict.reason}` }],
@@ -802,13 +825,16 @@ async function main() {
   await server.connect(transport);
   const runtimeUrl = process.env.CAUSAL_RUNTIME_URL || 'https://mcp.causalos.xyz/';
   
-  console.error(`CausalOS MCP v0.1.0 running — LOCAL_FIRST MODE`);
-  console.error(`Runtime URL: ${runtimeUrl}`);
-  console.error(`Governance: Offline-Resilient | Telemetry: Async-Batched`);
-  
-  console.error(`Tools: context_build | causal_check | causal_record | causalos_execute`);
-  console.error(`       memory_store | memory_query | causal_graph_add`);
-  console.error(`       causal_simulate | causal_backtrack | causal_history`);
+  logJson("info", "mcp_startup", {
+    version: MCP_VERSION,
+    runtime_url: runtimeUrl,
+    mode: "LOCAL_FIRST",
+    tools: [
+      "context_build", "causal_check", "causal_record", "causalos_execute",
+      "memory_store", "memory_query", "causal_graph_add", "causal_simulate",
+      "causal_backtrack", "causal_history",
+    ],
+  });
 }
 
 async function startSyncLoop() {
@@ -816,7 +842,7 @@ async function startSyncLoop() {
 }
 
 main().catch((error) => {
-  console.error("Fatal error:", error);
+  logJson("error", "fatal_error", { message: String(error) });
   process.exit(1);
 });
 

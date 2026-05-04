@@ -75,6 +75,10 @@ describe("SANDBOX ALLOW tests", () => {
     // We call sandboxExec so the integration path (execFile) is also tested.
     const result = await sandboxExec("ls -la");
 
+    if (process.platform === "win32") {
+      expect(result.allowed).toBe(false);
+      return;
+    }
     expect(result.allowed).toBe(true);
     if (result.allowed) {
       // ls always writes to stdout on a non-empty dir; on Windows it may be dir

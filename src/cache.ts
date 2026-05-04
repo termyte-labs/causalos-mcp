@@ -11,23 +11,31 @@ export interface Verdict {
 }
 
 export class HotCache {
-    private static cache = new LRUCache<string, Verdict>({
+    private static allowCache = new LRUCache<string, Verdict>({
         max: 500,
         ttl: 1000 * 60 * 60, // 1 hour
+    });
+    private static blockCache = new LRUCache<string, Verdict>({
+        max: 1000,
+        ttl: 1000 * 60 * 60 * 24 * 7, // 7 days
     });
 
     /**
      * Retrieves a cached verdict for a given action fingerprint.
      */
     public static get(fingerprint: string): Verdict | undefined {
-        return this.cache.get(fingerprint);
+        return this.blockCache.get(fingerprint) || this.allowCache.get(fingerprint);
     }
 
     /**
      * Stores a verdict in the local hot cache.
      */
     public static set(fingerprint: string, verdict: Verdict): void {
-        this.cache.set(fingerprint, verdict);
+        if (verdict.recommendation === 'ABORT') {
+            this.blockCache.set(fingerprint, verdict);
+            return;
+        }
+        this.allowCache.set(fingerprint, verdict);
     }
 
     /**
@@ -35,7 +43,7 @@ export class HotCache {
      */
     public static updateFromSync(data: Record<string, Verdict>): void {
         for (const [fingerprint, verdict] of Object.entries(data)) {
-            this.cache.set(fingerprint, verdict);
+            this.set(fingerprint, verdict);
         }
     }
 
@@ -51,7 +59,11 @@ export class HotCache {
         try {
             const data: Record<string, any> = {};
             // @ts-ignore - access internal cache entries for serialization
-            for (const [key, value] of this.cache.dump()) {
+            for (const [key, value] of this.allowCache.dump()) {
+                data[key] = value;
+            }
+            // @ts-ignore - access internal cache entries for serialization
+            for (const [key, value] of this.blockCache.dump()) {
                 data[key] = value;
             }
             const p = this.getCachePath();
@@ -69,7 +81,7 @@ export class HotCache {
             if (fs.existsSync(cachePath)) {
                 const data = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
                 for (const [key, val] of Object.entries(data)) {
-                    this.cache.set(key, val as Verdict);
+                    this.set(key, val as Verdict);
                 }
                 console.error(`[HotCache] Loaded ${Object.keys(data).length} patterns from disk.`);
             }

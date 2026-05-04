@@ -2,6 +2,8 @@ import axios from 'axios';
 
 const CLOUD_URL = process.env.CAUSAL_RUNTIME_URL || 'https://mcp.causalos.xyz';
 const API_KEY = process.env.CAUSAL_API_KEY;
+const DEV_MODE = process.env.CAUSAL_DEV_MODE === "1";
+const TEST_MODE = process.env.NODE_ENV === "test" || process.env.VITEST === "true";
 
 export class CloudKernelClient {
     private client;
@@ -9,13 +11,20 @@ export class CloudKernelClient {
     constructor() {
         console.error(`[CloudKernelClient] Initialized with URL: ${CLOUD_URL}`);
         if (!API_KEY) {
-            console.error(`[CloudKernelClient] WARNING: No CAUSAL_API_KEY found in environment.`);
+            if (TEST_MODE) {
+                console.error(`[CloudKernelClient] Test mode without API key. Using unauthenticated test client.`);
+            } else
+            if (DEV_MODE) {
+                console.error(`[CloudKernelClient] Dev mode enabled without API key. Cloud calls will fail closed.`);
+            } else {
+                throw new Error("CAUSAL_API_KEY is required. Set CAUSAL_DEV_MODE=1 only for explicit local development.");
+            }
         }
 
         this.client = axios.create({
             baseURL: CLOUD_URL,
             headers: {
-                'Authorization': `Bearer ${API_KEY || 'DEV_BYPASS'}`,
+                ...(API_KEY ? { 'Authorization': `Bearer ${API_KEY}` } : {}),
                 'Content-Type': 'application/json'
             },
             timeout: 15000 // Increased to 15s for cloud reliability

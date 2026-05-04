@@ -5,6 +5,10 @@ import { HotCache } from './cache.js';
 import type { Verdict } from './cache.js';
 import { CloudKernelClient } from './cloud-client.js';
 
+function logJson(level: 'info' | 'error', event: string, fields: Record<string, unknown> = {}) {
+    console.error(JSON.stringify({ level, event, ts: new Date().toISOString(), ...fields }));
+}
+
 export class GovernanceManager {
     private cloudClient: CloudKernelClient;
     private syncInterval: NodeJS.Timeout | null = null;
@@ -39,7 +43,7 @@ export class GovernanceManager {
             fs.writeFileSync(tempPath, JSON.stringify(sessionId ? sessionData : this.telemetryBuffer, null, 2));
             fs.renameSync(tempPath, p);
         } catch (err) {
-            console.error('[GovernanceManager] Failed to save telemetry to disk:', err);
+            logJson('error', 'telemetry_save_failed', { message: String(err) });
         }
     }
 
@@ -64,16 +68,16 @@ export class GovernanceManager {
                     fs.unlinkSync(p); // Delete after successful load
                 } catch (e) {
                     // If file is corrupt, move it to .bak or delete
-                    console.error(`[GovernanceManager] Corrupt telemetry file ${file}, removing:`, e);
+                    logJson('error', 'telemetry_corrupt_file_removed', { file, message: String(e) });
                     fs.unlinkSync(p);
                 }
             }
             if (this.telemetryBuffer.length > 0) {
                 this.saveTelemetryToDisk(); // Consolidate into global file
-                console.error(`[GovernanceManager] Recovered ${this.telemetryBuffer.length} pending telemetry records.`);
+                logJson('info', 'telemetry_recovered', { count: this.telemetryBuffer.length });
             }
         } catch (err) {
-            console.error('[GovernanceManager] Failed to load telemetry from disk:', err);
+            logJson('error', 'telemetry_load_failed', { message: String(err) });
         }
     }
 
@@ -84,7 +88,7 @@ export class GovernanceManager {
      * 3. Sets up background telemetry flushing
      */
     public async initialize() {
-        console.error('[GovernanceManager] Initializing Local-First Engine...');
+        logJson('info', 'governance_initialize');
         HotCache.loadFromDisk();
         this.loadTelemetryFromDisk();
         
@@ -100,7 +104,7 @@ export class GovernanceManager {
 
     public async syncWithCloud() {
         try {
-            console.error('[GovernanceManager] Syncing failure patterns from Cloud Ledger...');
+            logJson('info', 'governance_sync_start');
             const snapshot = await this.cloudClient.getGovernanceSnapshot();
             
             const normalized: Record<string, Verdict> = {};
@@ -116,9 +120,9 @@ export class GovernanceManager {
 
             HotCache.updateFromSync(normalized);
             HotCache.saveToDisk();
-            console.error(`[GovernanceManager] Sync Complete. ${Object.keys(normalized).length} patterns active.`);
+            logJson('info', 'governance_sync_complete', { patterns: Object.keys(normalized).length });
         } catch (err: any) {
-            console.error('[GovernanceManager] Sync failed:', err.message);
+            logJson('error', 'governance_sync_failed', { message: err.message });
         }
     }
 
@@ -152,7 +156,7 @@ export class GovernanceManager {
         // We don't call saveTelemetryToDisk() yet to avoid writing an empty file 
         // if we are about to re-queue failures anyway.
 
-        console.error(`[GovernanceManager] Flushing ${batch.length} telemetry records to cloud...`);
+        logJson('info', 'telemetry_flush_start', { count: batch.length });
         
         const failedRecords: any[] = [];
 
@@ -166,13 +170,13 @@ export class GovernanceManager {
                     }
                 }
             } catch (err: any) {
-                console.error(`[GovernanceManager] Flush error for ${record.type}:`, err.message);
+                logJson('error', 'telemetry_flush_record_failed', { type: record.type, message: err.message });
                 failedRecords.push(record);
             }
         }
 
         if (failedRecords.length > 0) {
-            console.error(`[GovernanceManager] ${failedRecords.length} records failed to flush. Re-queueing.`);
+            logJson('error', 'telemetry_flush_requeued', { count: failedRecords.length });
             this.telemetryBuffer = [...failedRecords, ...this.telemetryBuffer];
         }
         
