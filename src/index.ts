@@ -124,24 +124,28 @@ function withFailureTracking(handler: any, toolName: string) {
         govManager.logAsync('failure', {
           session_id: args.session_id || "adhoc_session",
           label: `Tool Error: ${toolName}`,
-          error_message: JSON.stringify(result.content),
+          // Redact the content array in case it contains secret-bearing error text
+          error_message: JSON.stringify(Sanitizer.redact(result.content)),
           context: { tool: toolName, args: Sanitizer.redact(args) }
         });
       }
       return result;
     } catch (error: any) {
-      logJson("error", "tool_crash", { tool: toolName, message: error.message });
+      // Redact error.message before logging — error messages frequently contain
+      // secret values (e.g. "Authentication failed for sk_live_XXXX").
+      const safeMessage = Sanitizer.redact(error.message ?? String(error));
+      logJson("error", "tool_crash", { tool: toolName, message: safeMessage });
       
       // Log the crash to the Causal Ledger asynchronously
       govManager.logAsync('failure', {
         session_id: args.session_id || "adhoc_session",
         label: `Tool Crash: ${toolName}`,
-        error_message: error.message,
-        context: { tool: toolName, stack: error.stack, args: Sanitizer.redact(args) }
+        error_message: safeMessage,
+        context: { tool: toolName, args: Sanitizer.redact(args) }
       });
 
       return {
-        content: [{ type: "text", text: `Internal Error in ${toolName}: ${error.message}` }],
+        content: [{ type: "text", text: `Internal Error in ${toolName}: ${safeMessage}` }],
         isError: true,
       };
     }
@@ -245,7 +249,10 @@ server.registerTool(
       const isSensitiveTool = sensitiveTools.includes(tool_name);
 
       const rawCommand: string = typeof args === "string" ? args : (args?.command ?? "");
-      const safeShellCommands = ["rg --files", "ls", "pwd", "git status", "git diff --stat"];
+      // NOTE: Only include commands that are also in command-sandbox.ts ALLOWED_COMMANDS.
+      // 'rg' (ripgrep) was previously here but is NOT in the sandbox allowlist — it would
+      // pass this gate only to be blocked by sandboxExec, wasting a kernel round-trip.
+      const safeShellCommands = ["ls", "pwd", "git status", "git diff --stat"];
       const isSafeShellCommand = (tool_name === "run_shell_command" || tool_name === "shell") && 
                                  safeShellCommands.some(cmd => rawCommand.trim().startsWith(cmd));
       
@@ -273,8 +280,11 @@ server.registerTool(
       }
 
       if (localVerdict && localVerdict.recommendation === "ABORT") {
+        // Always return isError:true so the calling agent does not interpret
+        // a soft block as a success-shaped response and continue executing.
         return {
-          content: [{ type: "text", text: `CausalOS ESCALATE: Local block downgraded in development mode for '${tool_name}'.` }],
+          content: [{ type: "text", text: `CausalOS ESCALATE: Governance block for '${tool_name}' in development mode. Action NOT executed. Reason: ${localVerdict.reason}` }],
+          isError: true,
         };
       }
 
@@ -356,8 +366,10 @@ server.registerTool(
             if (!filePath) throw new Error("Missing 'path' or 'file_path' in arguments.");
             
             const fullPath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
-            await fs.mkdir(path.dirname(fullPath), { recursive: true });
-            await fs.writeFile(fullPath, content, "utf-8");
+            await withFsTimeout(async () => {
+              await fs.mkdir(path.dirname(fullPath), { recursive: true });
+              await fs.writeFile(fullPath, content, "utf-8");
+            });
             outcome = { status: "executed", file: fullPath, bytes: content.length };
         } else if (tool_name === "replace" || tool_name === "replace_file_content") {
             const filePath = args.file_path || args.path || args.TargetFile;
@@ -366,26 +378,26 @@ server.registerTool(
             if (!filePath || !target) throw new Error("Missing 'file_path' or 'target' in arguments.");
 
             const fullPath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
-            const data = await fs.readFile(fullPath, "utf-8");
+            const data = await withFsTimeout(() => fs.readFile(fullPath, "utf-8"));
             const updated = data.replace(target, replacement);
-            await fs.writeFile(fullPath, updated, "utf-8");
+            await withFsTimeout(() => fs.writeFile(fullPath, updated, "utf-8"));
             outcome = { status: "executed", file: fullPath, operation: "string_replace" };
         } else if (tool_name === "mkdir") {
             const dirPath = args.path || args.dir_path;
             if (!dirPath) throw new Error("Missing 'path' in arguments.");
             const fullPath = path.isAbsolute(dirPath) ? dirPath : path.join(process.cwd(), dirPath);
-            await fs.mkdir(fullPath, { recursive: true });
+            await withFsTimeout(() => fs.mkdir(fullPath, { recursive: true }));
             outcome = { status: "executed", directory: fullPath };
         } else if (tool_name === "list_directory" || tool_name === "read_directory") {
             const dirPath = args.path || args.directory || ".";
             const fullPath = path.isAbsolute(dirPath) ? dirPath : path.join(process.cwd(), dirPath);
-            const entries = await fs.readdir(fullPath, { withFileTypes: true });
+            const entries = await withFsTimeout(() => fs.readdir(fullPath, { withFileTypes: true }));
             outcome = { entries: entries.map(e => ({ name: e.name, type: e.isDirectory() ? "dir" : "file" })) };
         } else if (tool_name === "read_file") {
             const filePath = args.path || args.file_path;
             if (!filePath) throw new Error("Missing 'path' in arguments.");
             const fullPath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
-            const content = await fs.readFile(fullPath, "utf-8");
+            const content = await withFsTimeout(() => fs.readFile(fullPath, "utf-8"));
             outcome = { content };
         } else {
             success = false;
@@ -819,14 +831,43 @@ server.registerTool(
   }, "log_failure")
 );
 
+// ─── Filesystem operation timeout helper ─────────────────────────────────────
+// Wraps any fs.* promise with a 30-second AbortSignal timeout so that calls
+// to network-mounted paths (NFS/SMB) cannot block the MCP server indefinitely.
+const FS_TIMEOUT_MS = 30_000;
+async function withFsTimeout<T>(fn: () => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FS_TIMEOUT_MS);
+  try {
+    return await Promise.race([
+      fn(),
+      new Promise<never>((_, reject) => {
+        controller.signal.addEventListener('abort', () =>
+          reject(new Error(`Filesystem operation timed out after ${FS_TIMEOUT_MS}ms`))
+        );
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 async function main() {
   const transport = new StdioServerTransport();
 
   // Lifecycle Management: Graceful Shutdown
-  const shutdown = (signal: string) => {
-    logJson("info", "mcp_shutdown", { signal, message: "Graceful shutdown initiated." });
-    setTimeout(() => process.exit(0), 100);
+  // govManager.stop() flushes buffered telemetry before exit. Without it,
+  // the last batch of outcomes is silently discarded on every clean shutdown.
+  const shutdown = async (signal: string) => {
+    logJson("info", "mcp_shutdown", { signal, message: "Flushing telemetry and shutting down." });
+    try {
+      govManager.stop();  // flush telemetry buffer synchronously queues final HTTP calls
+      await new Promise(resolve => setTimeout(resolve, 1500)); // give flush time to complete
+    } catch (err) {
+      logJson("error", "shutdown_flush_failed", { message: String(err) });
+    }
+    process.exit(0);
   };
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
@@ -847,9 +888,7 @@ async function main() {
   });
 }
 
-async function startSyncLoop() {
-  // Logic moved to GovernanceManager
-}
+// startSyncLoop() was a dead stub — background sync runs inside GovernanceManager.initialize().
 
 main().catch((error) => {
   logJson("error", "fatal_error", { message: String(error) });

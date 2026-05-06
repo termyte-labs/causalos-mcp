@@ -91,22 +91,34 @@ export class Sanitizer {
     return args;
   }
 
+  /**
+   * Normalizes volatile tokens in a command string so that the fingerprint
+   * matches the one produced by the Rust kernel's Normalizer::normalize_shell().
+   * Must stay in sync with cloud-runtime/src/normalizer.rs.
+   */
   private static normalizeCommandString(cmd: string): string {
     const trimmed = cmd.trim();
     if (!trimmed) return cmd;
 
-    const parts = trimmed.split(/\s+/);
-    if (parts.length <= 1) return trimmed;
+    // Mirror Rust RE_TEMP_PATH / RE_ABS_PATH / RE_REL_PATH / RE_SESSION_ID / RE_PORT
+    let result = trimmed
+      .replace(/(?:\/tmp\/|\/var\/tmp\/|\/var\/folders\/|%TEMP%)\S*/gi, '[TEMP_PATH]')
+      .replace(/\/(?:[\w.-]+\/)*[\w.-]+/g, '[ABS_PATH]')
+      .replace(/\.\.?\/(?:[\w.-]+\/)*[\w.-]+/g, '[REL_PATH]')
+      .replace(/session-[a-z0-9]+/gi, '[SESSION_ID]')
+      .replace(/port\s+\d{4,5}/gi, 'port [EPHEMERAL_PORT]');
 
-    const verb = parts[0];
+    const parts = result.split(/\s+/).filter(Boolean);
+    if (parts.length <= 1) return result;
+
+    const verb = parts[0]!;
     const rest = parts.slice(1);
 
-    // Separate flags (start with -) from positional arguments
-    // Note: This is a heuristic. Some tools use - for non-flags, but for fingerprinting it's usually fine.
+    // Separate flags (start with -) from positional arguments and sort flags for
+    // canonical ordering — same logic as Rust: flags.sort() then non_flags.
     const flags = rest.filter(p => p.startsWith('-')).sort();
     const nonFlags = rest.filter(p => !p.startsWith('-'));
 
-    // Reconstruct canonical command
     return [verb, ...flags, ...nonFlags].join(' ');
   }
 }

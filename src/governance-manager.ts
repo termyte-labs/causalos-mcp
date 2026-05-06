@@ -4,6 +4,7 @@ import * as os from 'os';
 import { HotCache } from './cache.js';
 import type { Verdict } from './cache.js';
 import { CloudKernelClient } from './cloud-client.js';
+import { Sanitizer } from './sanitizer.js';
 
 function logJson(level: 'info' | 'error', event: string, fields: Record<string, unknown> = {}) {
     console.error(JSON.stringify({ level, event, ts: new Date().toISOString(), ...fields }));
@@ -135,10 +136,15 @@ export class GovernanceManager {
 
     /**
      * Push data to telemetry buffer for async upload.
+     * Error messages are redacted before being stored to prevent secrets from
+     * leaking into the ~/.causalos/telemetry/ files on disk.
      */
     public logAsync(type: 'outcome' | 'failure', data: any) {
-        this.telemetryBuffer.push({ type, data, timestamp: Date.now() });
-        this.saveTelemetryToDisk(data.session_id);
+        const safeData = type === 'failure' && data.error_message
+            ? { ...data, error_message: Sanitizer.redact(String(data.error_message)) }
+            : data;
+        this.telemetryBuffer.push({ type, data: safeData, timestamp: Date.now() });
+        this.saveTelemetryToDisk(safeData.session_id);
         
         // If buffer gets too big, flush immediately
         if (this.telemetryBuffer.length > 50) {
