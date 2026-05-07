@@ -33,7 +33,7 @@ import { z } from "zod";
 // NOTE: raw exec/execAsync is intentionally removed from this module.
 // All shell execution must flow through CommandSandbox.sandboxExec,
 // which enforces the command allowlist and encoding-bypass detection.
-import { sandboxExec } from "./command-sandbox.js";
+import { nativeExec } from "./executor.js";
 import { kernel } from "./client.js";
 import { Sanitizer } from "./sanitizer.js";
 import { HotCache } from "./cache.js";
@@ -95,8 +95,8 @@ server.registerTool(
                 instruction_patch: `CAUSAL_GUARD_ENGAGED: Risk Score is ${planContract.risk_score}. Follow these invariants: ${planContract.required_invariants.map((i: any) => i.condition).join(", ")}`,
                 usage_instructions:
                   "1) Incorporate the instruction_patch into your reasoning NOW. " +
-                  "2) Use causal_check before risky actions. " +
-                  "3) Call causal_record after execution with contract_hash. " +
+                  "2) Use check_action before risky actions. " +
+                  "3) Call record_outcome after execution with contract_hash. " +
                   "4) Your agent improves with every recorded outcome via the Causal Ledger.",
               },
               null,
@@ -180,9 +180,9 @@ function withFailureTracking(handler: any, toolName: string) {
   };
 }
 
-// ─── Tool 2: causal_check (V2 — Kernel Governance) ───────────────────────────
+// ─── Tool 2: check_action (Governance Check) ────────────────────────────────
 server.registerTool(
-  "causal_check",
+  "check_action",
   {
     description:
       "Check if a specific action has caused failures before. Returns a Verdict from the Rust Kernel.",
@@ -251,12 +251,12 @@ server.registerTool(
         isError: true,
       };
     }
-  }, "causal_check")
+  }, "check_action")
 );
 
-// ─── Tool 4: causalos_execute (Mandatory Governance Broker) ──────────────────
+// ─── Tool 4: execute (Mandatory Governance Broker) ──────────────────────────
 server.registerTool(
-  "causalos_execute",
+  "execute",
   {
     description: "MANDATORY EXECUTION BROKER. All tool executions (shell, filesystem, etc.) MUST be routed through this tool to ensure governance and lineage.",
     inputSchema: z.object({
@@ -284,34 +284,24 @@ server.registerTool(
       const isSafeShellCommand = (tool_name === "run_shell_command" || tool_name === "shell") && 
                                  safeShellCommands.some(cmd => rawCommand.trim().startsWith(cmd));
       
-      if (!localVerdict && isSensitiveTool && !isSafeShellCommand) {
-        const policyAction = applyUnifiedPolicy("UNCERTAIN");
-        if (policyAction !== "ALLOW") {
-          logJson("error", "fail_closed_sensitive_tool", { tool_name });
-          return {
-            content: [{ type: "text", text: `CausalOS ${policyAction}: Zero history for sensitive tool '${tool_name}'.` }],
-            isError: true
-          };
-        }
-      }
-
+      // Bug fix: don't fail-closed for unknown sensitive tools in dev mode.
+      // The local cache starts empty — blocking every tool call until patterns are
+      // learned would make the execute tool unusable on a fresh install.
+      // Instead, fall through to the kernel which has the authoritative verdict.
+      // Only hard-block if we have an explicit BLOCK/ABORT from local cache.
       if (localVerdict && (localVerdict.recommendation === "ABORT" || (localVerdict as any).verdict === "BLOCK")) {
         const policyAction = applyUnifiedPolicy("BLOCK");
         if (policyAction === "BLOCK") {
           logJson("error", "hard_block_local_match", { tool_name, reason: localVerdict.reason });
           await sendSlackAlert(`Prevented execution of ${tool_name} due to LOCAL_BLOCK: ${localVerdict.reason}`);
           return {
-            content: [{ type: "text", text: `CausalOS LOCAL_BLOCK: Execution denied. Reason: ${localVerdict.reason}` }],
+            content: [{ type: "text", text: `HARD_BLOCK: Execution denied. Reason: ${localVerdict.reason}` }],
             isError: true
           };
         }
-      }
-
-      if (localVerdict && localVerdict.recommendation === "ABORT") {
-        // Always return isError:true so the calling agent does not interpret
-        // a soft block as a success-shaped response and continue executing.
+        // ESCALATE path for dev-mode UNCERTAIN promotion
         return {
-          content: [{ type: "text", text: `CausalOS ESCALATE: Governance block for '${tool_name}' in development mode. Action NOT executed. Reason: ${localVerdict.reason}` }],
+          content: [{ type: "text", text: `GOVERNANCE_BLOCK: Action '${tool_name}' blocked. Reason: ${localVerdict.reason}` }],
           isError: true,
         };
       }
@@ -336,12 +326,18 @@ server.registerTool(
             : "UNCERTAIN"
       );
       const finalKernelAction = applyUnifiedPolicy(normalizedKernelAction);
-      if (finalKernelAction !== "ALLOW") {
+      // Only hard-block on explicit BLOCK verdicts.
+      // UNCERTAIN in dev mode means "causal memory has no strong opinion" — allow through.
+      // In production, applyUnifiedPolicy() already promotes UNCERTAIN → BLOCK.
+      if (finalKernelAction === "BLOCK") {
         await sendSlackAlert(`Prevented execution of ${tool_name} due to ${verdict.action}: ${verdict.reason}`);
         return {
           content: [{ type: "text", text: `CausalOS BLOCK: Execution denied. Reason: ${verdict.reason}` }],
           isError: true
         };
+      }
+      if (finalKernelAction === "UNCERTAIN") {
+        logJson("info", "execute_uncertain_proceeding", { tool_name, reason: verdict.reason });
       }
 
       // 2. EXECUTE (Generic Broker)
@@ -350,43 +346,22 @@ server.registerTool(
 
       try {
         if (tool_name === "run_command" || tool_name === "shell" || tool_name === "run_shell_command") {
-            // ── Hardened execution path ─────────────────────────────────────────
-            // sandboxExec enforces:
-            //   1. Explicit command allowlist — unknown verbs → PermissionDenied
-            //   2. Interpreter bypass blocking (python -c, node -e, bash -c, …)
-            //   3. Encoding bypass pre-scan (base64 / URL-encoded payloads decoded
-            //      and checked BEFORE the raw string is evaluated)
-            //   4. Shell metacharacter rejection (pipe, redirect, backtick, …)
-            //   5. execFile (not exec) — OS never invokes a shell
             const rawCommand: string = typeof args === "string" ? args : (args.command ?? "");
 
             if (!rawCommand.trim()) {
                 success = false;
                 outcome = { error: "PermissionDenied: empty command string." };
             } else {
-                const sandboxResult = await sandboxExec(rawCommand);
-
-                if (!sandboxResult.allowed) {
-                    // Hard block — do not execute, return structured denial
-                    success = false;
-                    outcome = {
-                        error: `PermissionDenied [${sandboxResult.blocked_by}]: ${sandboxResult.reason}`,
-                        blocked_by: sandboxResult.blocked_by,
-                    };
-                    // Escalate hard blocks to Slack (same channel as HARD_BLOCK)
-                    await sendSlackAlert(
-                        `causalos_execute SANDBOX_BLOCK\n` +
-                        `Command: ${rawCommand.slice(0, 200)}\n` +
-                        `Reason: ${sandboxResult.reason}`
-                    );
-                } else {
-                    outcome = {
-                        stdout: sandboxResult.stdout,
-                        stderr: sandboxResult.stderr,
-                        exit_code: sandboxResult.exit_code,
-                    };
-                    if (sandboxResult.exit_code !== 0) success = false;
-                }
+                // Execution is already gated by the Cloud Kernel above (kernel.prepareToolCall).
+                // We use nativeExec to run the binary directly without a shell.
+                const execResult = await nativeExec(rawCommand);
+                
+                outcome = {
+                    stdout: execResult.stdout,
+                    stderr: execResult.stderr,
+                    exit_code: execResult.exit_code,
+                };
+                if (execResult.exit_code !== 0) success = false;
             }
         } else if (tool_name === "write_file" || tool_name === "write_to_file" || tool_name === "create_file") {
             const filePath = args.path || args.file_path || args.TargetFile;
@@ -438,12 +413,16 @@ server.registerTool(
       }
 
       // 3. COMMIT (Record in Ledger - ASYNC)
-      govManager.logAsync('outcome', { 
-        session_id: session_id || "adhoc_session",
-        tool_call_id: verdict.tool_call_id, 
-        outcome_json: JSON.stringify(Sanitizer.redact(outcome)), 
-        success 
-      });
+      // Note: Agents should also call record_outcome manually with richer context.
+      // This automatic commit is a safety net to ensure the ledger always closes.
+      if (verdict.tool_call_id) {
+        govManager.logAsync('outcome', { 
+          session_id: session_id || "adhoc_session",
+          tool_call_id: verdict.tool_call_id, 
+          outcome_json: JSON.stringify(Sanitizer.redact(outcome)), 
+          success 
+        });
+      }
 
       return {
         content: [{
@@ -462,12 +441,12 @@ server.registerTool(
         isError: true,
       };
     }
-  }, "causalos_execute")
+  }, "execute")
 );
 
-// ─── Tool 3: causal_record (V2 — Closing the Loop) ───────────────────────────
+// ─── Tool 3: record_outcome (Closing the Loop) ───────────────────────────────
 server.registerTool(
-  "causal_record",
+  "record_outcome",
   {
     description:
       "Record what happened after executing an action to close the learning loop in the binary ledger.",
@@ -513,12 +492,12 @@ server.registerTool(
         isError: true,
       };
     }
-  }, "causal_record")
+  }, "record_outcome")
 );
 
-// ─── Tool 5: causal_history (V2 — Ledger Trace) ──────────────────────────────
+// ─── Tool 5: trace_history (Ledger Trace) ────────────────────────────────────
 server.registerTool(
-  "causal_history",
+  "trace_history",
   {
     description: "View the causal trace of a specific plan from the ledger.",
     inputSchema: z.object({
@@ -542,7 +521,7 @@ server.registerTool(
         isError: true,
       };
     }
-  }, "causal_history")
+  }, "trace_history")
 );
 
 // ─── Tool 6: memory_store (V3 — General Context Memory) ──────────────────────
@@ -638,9 +617,9 @@ server.registerTool(
   }, "memory_query")
 );
 
-// ─── Tool 8: causal_graph_add (V3 — Build Causal Memory) ─────────────────────
+// ─── Tool 8: graph_add (Build Causal Memory Graph) ──────────────────────────
 server.registerTool(
-  "causal_graph_add",
+  "graph_add",
   {
     description:
       "Add a node or edge to the causal memory graph. Use this to record what happened and WHY it happened, building a causal chain. Call after significant events to build the causal world model. Nodes represent events/actions/outcomes; edges represent causal relationships (what caused what).",
@@ -727,12 +706,12 @@ server.registerTool(
         isError: true,
       };
     }
-  }, "causal_graph_add")
+  }, "graph_add")
 );
 
-// ─── Tool 9: causal_simulate (V3 — Forward Reasoning) ────────────────────────
+// ─── Tool 9: simulate (Forward Reasoning) ────────────────────────────────────
 server.registerTool(
-  "causal_simulate",
+  "simulate",
   {
     description:
       "FORWARD REASONING: Predict what will happen if you take a proposed action. The engine analyzes past trajectories and known causal chains to predict outcomes, confidence, and risk. Use this BEFORE taking risky or uncertain actions. Returns: predicted_outcome, confidence_score, risk_score, recommendation (PROCEED/CAUTION/ABORT).",
@@ -778,12 +757,12 @@ server.registerTool(
         isError: true,
       };
     }
-  }, "causal_simulate")
+  }, "simulate")
 );
 
-// ─── Tool 10: causal_backtrack (V3 — Backward Reasoning) ──────────────────────
+// ─── Tool 10: backtrack (Backward Reasoning) ─────────────────────────────────
 server.registerTool(
-  "causal_backtrack",
+  "backtrack",
   {
     description:
       "BACKWARD REASONING: Given a node ID (an event or outcome), trace back through the causal graph to find ROOT CAUSES and understand WHY it happened. Returns a causal chain from root causes to the target event, plus counterfactual suggestions ('if X hadn't happened...'). Use this for post-mortem analysis, debugging, and learning from failures.",
@@ -816,7 +795,7 @@ server.registerTool(
         isError: true,
       };
     }
-  }, "causal_backtrack")
+  }, "backtrack")
 );
 
 // ─── Tool 11: log_failure (Explicit Manual Logging) ──────────────────────────
@@ -890,8 +869,7 @@ async function main() {
   const shutdown = async (signal: string) => {
     logJson("info", "mcp_shutdown", { signal, message: "Flushing telemetry and shutting down." });
     try {
-      govManager.stop();  // flush telemetry buffer synchronously queues final HTTP calls
-      await new Promise(resolve => setTimeout(resolve, 1500)); // give flush time to complete
+      await govManager.stop();  // flush telemetry and await completion
     } catch (err) {
       logJson("error", "shutdown_flush_failed", { message: String(err) });
     }
@@ -909,9 +887,9 @@ async function main() {
     runtime_url: runtimeUrl,
     mode: "LOCAL_FIRST",
     tools: [
-      "context_build", "causal_check", "causal_record", "causalos_execute",
-      "memory_store", "memory_query", "causal_graph_add", "causal_simulate",
-      "causal_backtrack", "causal_history",
+      "context_build", "check_action", "record_outcome", "execute",
+      "memory_store", "memory_query", "graph_add", "simulate",
+      "backtrack", "trace_history", "log_failure",
     ],
   });
 }

@@ -111,6 +111,7 @@ export class CloudKernelClient {
         parent_node_id?: string;
         confidence?: number;
     }) {
+        this.requireKey();
         const resp = await this.client.post('/v1/graph/node', params);
         return resp.data;
     }
@@ -122,16 +123,19 @@ export class CloudKernelClient {
         initial_weight?: number;
         explanation?: string;
     }) {
+        this.requireKey();
         const resp = await this.client.post('/v1/graph/edge', params);
         return resp.data;
     }
 
     async getSessionGraph(session_id: string) {
+        this.requireKey();
         const resp = await this.client.get(`/v1/graph/session/${session_id}`);
         return resp.data;
     }
 
     async backtrack(node_id: string, max_depth?: number, min_weight?: number) {
+        this.requireKey();
         const params = new URLSearchParams();
         if (max_depth !== undefined) params.set('max_depth', String(max_depth));
         if (min_weight !== undefined) params.set('min_weight', String(min_weight));
@@ -147,6 +151,7 @@ export class CloudKernelClient {
         action_type: string;
         context_node_id?: string;
     }) {
+        this.requireKey();
         const resp = await this.client.post('/v1/simulate', params);
         return resp.data;
     }
@@ -163,6 +168,7 @@ export class CloudKernelClient {
         importance?: number;
         ttl_seconds?: number;
     }) {
+        this.requireKey();
         const resp = await this.client.post('/v1/memory', params);
         return resp.data;
     }
@@ -175,11 +181,13 @@ export class CloudKernelClient {
         search?: string;
         limit?: number;
     }) {
+        this.requireKey();
         const resp = await this.client.post('/v1/memory/query', params);
         return resp.data;
     }
 
     async deleteMemory(key: string, agent_id?: string) {
+        this.requireKey();
         const resp = await this.client.delete(`/v1/memory/${encodeURIComponent(key)}`, {
             params: { agent_id }
         });
@@ -194,6 +202,7 @@ export class CloudKernelClient {
         error_message: string;
         context?: Record<string, unknown>;
     }) {
+        // 1. Create causal graph node for lineage tracking
         const node = await this.createCausalNode({
             session_id: params.session_id,
             agent_id: params.agent_id,
@@ -207,6 +216,24 @@ export class CloudKernelClient {
             },
             confidence: 1.0
         });
+
+        // 2. Also commit the failure outcome to the ledger so it gets embedded into
+        //    failure_signatures via commit_handler. This enables semantic recall:
+        //    future similar actions will be blocked by the CAUSAL_MEMORY_BLOCK path.
+        //    We use the node's id as the anchor for the commit.
+        try {
+            this.requireKey();
+            await this.client.post('/v1/commit', {
+                tool_call_id: node.id,
+                outcome: `AGENT_FAILURE: ${params.label}. Error: ${params.error_message}`.slice(0, 500),
+                success: false,
+                exit_code: 1,
+            });
+        } catch (e) {
+            // Non-fatal — the causal node was already written
+            console.error('[logSystemFailure] commit for failure_signatures failed:', e);
+        }
+
         return node;
     }
 

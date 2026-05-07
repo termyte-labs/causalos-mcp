@@ -1,6 +1,6 @@
 {
   "name": "causalos",
-  "version": "0.1.5",
+  "version": "0.1.7",
   "description": "Dual Memory Agent Runtime: Causal Graph Engine + General Memory + Forward Simulation + Backward Inference for AI Agents",
   "main": "dist/index.js",
   "bin": {

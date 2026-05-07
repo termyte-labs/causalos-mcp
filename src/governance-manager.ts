@@ -190,10 +190,10 @@ export class GovernanceManager {
         this.saveTelemetryToDisk();
     }
 
-    public stop() {
+    public async stop() {
         if (this.syncInterval) clearInterval(this.syncInterval);
         if (this.flushInterval) clearInterval(this.flushInterval);
-        this.flushTelemetry(); // Final flush attempt
+        await this.flushTelemetry(); // Await to ensure final flush completes before exit
     }
 }
 
