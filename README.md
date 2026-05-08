@@ -1,53 +1,50 @@
-# Termyte — Terminal Governance for Coding Agents
+# Termyte - Governed Agent Actions + Failure Memory
 
-Termyte( Prev. CausalOS) is a lightweight, terminal-first governance runtime designed to protect your codebase from catastrophic agent actions (like `rm -rf /` or accidental database drops).
-Reached 700+ installs on npm in one single week.
-https://www.npmjs.com/package/causalos
-https://www.npmjs.com/package/termyte
+Termyte is an MCP-first governance and failure-memory layer for solo developers using coding agents.
 
-It provides a secure "Split-Plane" architecture where your coding agent (Claude Code, Cursor, etc.) proposes actions, and Termyte evaluates them against a deterministic sandbox and an LLM judge before execution.
+It gives agents three tools:
 
-## Features
+- `context_build`: call before a task to retrieve prior failures, constraints, and safer instructions.
+- `guard_action`: call before risky non-shell actions such as file deletion, git mutation, DB mutation, package publishing, network execution, or secret access.
+- `execute`: run shell commands through Termyte governance and failure-memory checks.
 
-- **Causal Guard**: Deterministic command analysis for high-risk operations.
-- **Agent Ledger**: Every action, verdict, and outcome is recorded in a secure, immutable ledger.
-- **Zero-Friction Auth**: Device-based identification (no API keys to manage).
-- **Terminal First**: View governance events directly in your terminal with `npx termyte log`.
+Termyte does not forcibly intercept native agent tools through MCP. Native tools are governed only when the agent follows the installed Termyte protocol. Future runtime-wrapper modes such as `termyte run codex` are separate from this MCP MEP.
 
-## Getting Started
+## Why It Exists
 
-### 1. Initialize Termyte
-Run this to generate your unique device ID and setup local config:
+Coding agents fail in two expensive ways:
+
+1. They run destructive actions too casually.
+2. They repeat failed approaches because they do not remember what went wrong.
+
+Termyte blocks clearly destructive actions, warns on similar prior failures, redacts secrets, and stores sanitized telemetry in the cloud runtime so future tasks can benefit from prior outcomes.
+
+## Install
+
 ```bash
 npx termyte init
 ```
 
-### 2. Configure your Agent
-Add Termyte as an MCP server to your favorite tool.
+`init` installs MCP config for the detected agent and writes `TERMYTE_PROTOCOL.md` next to the agent config. Protocol compliance must be verified per agent because MCP config alone does not guarantee the agent will call governance tools before native tools.
 
-#### Claude Code config:
-Add the following to your `claude_desktop_config.json`:
-```json
-{
-  "mcpServers": {
-    "termyte": {
-      "command": "npx",
-      "args": ["-y", "termyte"],
-      "env": {
-        "TERMYTE_API_URL": "https://mcp.causalos.xyz"
-      }
-    }
-  }
-}
-```
+## Agent Protocol
 
-### 3. Usage
-Once configured, Termyte will automatically intercept sensitive tool calls. You can monitor the activity:
-```bash
-npx termyte log
-```
+Agents should follow this workflow:
 
-## How it Works
-1. **Prepare**: The agent calls the `execute` tool with a proposed command.
-2. **Judge**: Termyte intercepts the call and evaluates the risk level via the 3-tier safety pipeline.
-3. **Commit**: If allowed and executed, Termyte records the stdout/stderr and exit code to the ledger.
+1. Call `context_build` before starting a coding task.
+2. Call `guard_action` before risky non-shell actions.
+3. Use `execute` for shell commands.
+4. Treat `WARN` as proceed-with-caution and keep the warning in context.
+5. Treat `BLOCK` as do-not-proceed and explain the safer alternative.
+
+## Verdicts
+
+- `ALLOW`: proceed.
+- `WARN`: proceed, but inject the warning/instruction patch into the agent context.
+- `BLOCK`: do not perform the action.
+
+## Cloud Data Posture
+
+Termyte sends sanitized task/action/outcome summaries to the cloud runtime by default. Redaction runs before transmission, judge input, persistence, logs, retrieval, and failure-memory storage.
+
+

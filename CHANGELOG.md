@@ -1,6 +1,15 @@
 # Changelog
 
-All notable changes to the CausalOS project will be documented in this file.
+All notable changes to the Termyte project will be documented in this file.
+
+## [1.1.0] - 2026-05-08
+
+### 🛡️ Termyte Production Release & Rebranding
+- **Official Rebranding**: Fully transitioned project from CausalOS to **Termyte**.
+- **Public Domain Migration**: Updated all API endpoints to `mcp.termyte.xyz` and documentation to `docs.termyte.ai`.
+- **Governance Refactor**: Standardized on the explicit 3-tool MEP governance model (`context_build`, `guard_action`, `execute`).
+- **Safety Memory**: Integrated "Failure Memory" to prevent agents from repeating stochastic hallucinations.
+- **Protocol Compliance**: Established `TERMYTE_PROTOCOL.md` as the source of truth for agent safety instructions.
 
 ## [1.0.0] - 2026-05-04
 

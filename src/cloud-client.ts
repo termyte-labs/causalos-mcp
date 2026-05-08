@@ -10,7 +10,7 @@ export class CloudKernelClient {
     private baseURL: string;
 
     constructor() {
-        this.baseURL = process.env.TERMYTE_API_URL || 'https://mcp.causalos.xyz';
+        this.baseURL = process.env.TERMYTE_API_URL || 'https://mcp.termyte.xyz';
     }
 
     async getDeviceId(): Promise<string> {
@@ -83,10 +83,34 @@ export class CloudKernelClient {
         });
     }
 
+    async contextBuild(input: {
+        task: string;
+        cwd?: string;
+        project_name?: string;
+        agent?: string;
+        session_id?: string;
+    }) {
+        return this.request('POST', '/v1/context/build', Sanitizer.redact(input));
+    }
+
+    async guardAction(input: {
+        session_id: string;
+        action_type: string;
+        intent: string;
+        payload: any;
+        cwd?: string;
+        project_name?: string;
+    }) {
+        return this.request('POST', '/v1/governance/guard', {
+            ...input,
+            payload: Sanitizer.redact(input.payload),
+        });
+    }
+
     async commitToolCall(tool_call_id: string, outcome: any, success: boolean, exitCode?: number) {
         return this.request('POST', '/v1/governance/commit', {
             tool_call_id,
-            outcome_json: outcome,
+            outcome_json: Sanitizer.redact(outcome),
             success,
             exit_code: exitCode
         });

@@ -17,6 +17,10 @@ describe("Cloud contract", () => {
                 res.setHeader("content-type", "application/json");
                 if ((req.url || "").startsWith("/v1/governance/prepare")) {
                     res.end(JSON.stringify({ verdict: "ALLOW", reason: "ok", tool_call_id: "tc_1" }));
+                } else if ((req.url || "").startsWith("/v1/context/build")) {
+                    res.end(JSON.stringify({ session_id: "s1", instruction_patch: "ok", relevant_failures: [], constraints: [] }));
+                } else if ((req.url || "").startsWith("/v1/governance/guard")) {
+                    res.end(JSON.stringify({ verdict: "WARN", reason: "prior failure", warning: "be careful", risk_score: 0.6, matched_patterns: [] }));
                 } else if ((req.url || "").startsWith("/v1/governance/commit")) {
                     res.end(JSON.stringify({ status: "success" }));
                 } else {
@@ -74,5 +78,33 @@ describe("Cloud contract", () => {
             success: true,
             exit_code: 0
         });
+    });
+
+    it("contextBuild calls /v1/context/build with sanitized payload", async () => {
+        const client = new CloudKernelClient();
+        await client.contextBuild({ task: "fix auth", cwd: "/tmp/project", agent: "codex" });
+
+        expect(requests[0]?.url).toBe("/v1/context/build");
+        expect(requests[0]?.method).toBe("POST");
+        expect(requests[0]?.body).toMatchObject({
+            task: "fix auth",
+            cwd: "/tmp/project",
+            agent: "codex"
+        });
+    });
+
+    it("guardAction calls /v1/governance/guard with sanitized payload", async () => {
+        const client = new CloudKernelClient();
+        await client.guardAction({
+            session_id: "s1",
+            action_type: "secret_read",
+            intent: "inspect env",
+            payload: { token: "ghp_abcdefghijklmnopqrstuvwxyz1234567890" },
+        });
+
+        expect(requests[0]?.url).toBe("/v1/governance/guard");
+        expect(requests[0]?.method).toBe("POST");
+        expect(requests[0]?.body.session_id).toBe("s1");
+        expect(JSON.stringify(requests[0]?.body)).toContain("[REDACTED]");
     });
 });

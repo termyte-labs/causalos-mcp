@@ -13,6 +13,12 @@ import { v4 as uuidv4 } from "uuid";
 
 const CONFIG_DIR = path.join(os.homedir(), ".termyte");
 const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
+const TERMYTE_PROTOCOL = `Termyte protocol:
+- Before starting a coding task, call the termyte context_build tool with the task, cwd, project_name, and agent when available.
+- Before risky non-shell actions such as file deletion, file overwrite, git mutation, database mutation, network execution, package publishing, or secret access, call termyte guard_action.
+- Use termyte execute for shell commands when available.
+- If Termyte returns WARN, proceed only with the warning instructions in context.
+- If Termyte returns BLOCK, do not perform the action; explain the reason and safer alternative.`;
 
 // ─── CLI Command Dispatcher ───────────────────────────────────────────────────
 const arg = process.argv[2];
@@ -103,7 +109,7 @@ async function init() {
     "args": ["-y", "termyte"],
     "env": {
       "TERMYTE_DEVICE_ID": "<device_id>",
-      "TERMYTE_API_URL": "https://mcp.causalos.xyz"
+      "TERMYTE_API_URL": "https://mcp.termyte.xyz"
     }
   }
 
@@ -115,7 +121,7 @@ For TOML-based configs (e.g. Codex):
 
   [mcp_servers.termyte.env]
   TERMYTE_DEVICE_ID = "<device_id>"
-  TERMYTE_API_URL = "https://mcp.causalos.xyz"
+  TERMYTE_API_URL = "https://mcp.termyte.xyz"
 `);
             process.exit(0);
         }
@@ -176,10 +182,14 @@ For TOML-based configs (e.g. Codex):
             args: ["-y", "termyte"],
             env: {
                 TERMYTE_DEVICE_ID: termyteConfig.device_id,
-                TERMYTE_API_URL: "https://mcp.causalos.xyz"
+                TERMYTE_API_URL: "https://mcp.termyte.xyz"
             }
         };
         fs.writeFileSync(targetPath, JSON.stringify(agentConfig, null, 2));
+        const protocolPath = path.join(targetDir, "TERMYTE_PROTOCOL.md");
+        fs.writeFileSync(protocolPath, TERMYTE_PROTOCOL);
+        termyteConfig.protocol_verified = false;
+        termyteConfig.protocol_note = `${selectedAgent.name} MCP config was installed. Protocol instructions were written to ${protocolPath}; verify your agent reads this file or add it to custom instructions.`;
     } else if (selectedAgent.type === "toml") {
         let content = "";
         if (fs.existsSync(targetPath)) {
@@ -194,10 +204,15 @@ For TOML-based configs (e.g. Codex):
                 newContent = "# Required for MCP support\nrmcp_client = true\n\n" + newContent;
             }
 
-            newContent += `\n[mcp_servers.termyte]\ncommand = "npx"\nargs = ["-y", "termyte"]\n\n[mcp_servers.termyte.env]\nTERMYTE_DEVICE_ID = "${termyteConfig.device_id}"\nTERMYTE_API_URL = "https://mcp.causalos.xyz"\n`;
+            newContent += `\n[mcp_servers.termyte]\ncommand = "npx"\nargs = ["-y", "termyte"]\n\n[mcp_servers.termyte.env]\nTERMYTE_DEVICE_ID = "${termyteConfig.device_id}"\nTERMYTE_API_URL = "https://mcp.termyte.xyz"\n`;
             fs.writeFileSync(targetPath, newContent);
         }
+        const protocolPath = path.join(targetDir, "TERMYTE_PROTOCOL.md");
+        fs.writeFileSync(protocolPath, TERMYTE_PROTOCOL);
+        termyteConfig.protocol_verified = false;
+        termyteConfig.protocol_note = `${selectedAgent.name} MCP config was installed. Protocol instructions were written to ${protocolPath}; verify your agent reads this file or add it to project instructions.`;
     }
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(termyteConfig, null, 2));
 
     // 4. Verification Step
     const finalContent = fs.readFileSync(targetPath, "utf-8");
@@ -208,11 +223,11 @@ For TOML-based configs (e.g. Codex):
     console.log(pc.green(`MCP entry verified in ${pc.bold(targetPath)}`));
 
     // 5. Verify API Connection
-    console.log(`\nVerifying connection to ${pc.cyan("mcp.causalos.xyz")}...`);
+    console.log(`\nVerifying connection to ${pc.cyan("mcp.termyte.xyz")}...`);
     try {
         await new Promise((resolve, reject) => {
-            const req = https.get("https://mcp.causalos.xyz/v1/health", {
-                headers: { "x-causalos-device-id": termyteConfig.device_id },
+            const req = https.get("https://mcp.termyte.xyz/v1/health", {
+                headers: { "x-termyte-device-id": termyteConfig.device_id },
                 timeout: 5000
             }, (res) => {
                 if (res.statusCode === 200) resolve(true);
@@ -231,8 +246,10 @@ For TOML-based configs (e.g. Codex):
     // 6. Print Success
     console.log(`\n${pc.green(pc.bold("Termyte active for " + selectedAgent.name))}\n`);
     console.log(`  Device: ${pc.cyan(termyteConfig.device_id)}`);
-    console.log(`  API:    https://mcp.causalos.xyz ${pc.green("v")}\n`);
+    console.log(`  API:    https://mcp.termyte.xyz ${pc.green("v")}\n`);
     console.log(`  ${pc.bold(selectedAgent.restart)}\n`);
+    console.log(`  Protocol: ${pc.yellow("manual verification required")}`);
+    console.log(`  ${termyteConfig.protocol_note}\n`);
     console.log(`  ${pc.bold("npx termyte log")}      -> see what your agent did`);
     console.log(`  ${pc.bold("npx termyte status")}   -> check connection\n`);
 
@@ -247,13 +264,13 @@ function showLogs() {
         process.exit(1);
     }
     const deviceId = config.device_id;
-    const apiUrl = process.env.TERMYTE_API_URL || "https://mcp.causalos.xyz";
+    const apiUrl = process.env.TERMYTE_API_URL || "https://mcp.termyte.xyz";
 
     console.log(pc.bold(pc.cyan(`\n📋 Termyte Governance Logs [${deviceId}]\n`)));
 
     const url = new URL(`${apiUrl}/v1/governance/logs`);
     const req = https.get(url, {
-        headers: { "x-causalos-device-id": deviceId }
+        headers: { "x-termyte-device-id": deviceId }
     }, (res) => {
         if (res.statusCode !== 200) {
             console.error(pc.red(`Server returned status ${res.statusCode}`));
@@ -309,7 +326,7 @@ function checkStatus() {
     console.log(`  Device ID: ${pc.cyan(config.device_id)}`);
     console.log(`  Agent:     ${pc.cyan(config.agent || "Unknown")}`);
 
-    https.get("https://mcp.causalos.xyz/v1/health", {
+    https.get("https://mcp.termyte.xyz/v1/health", {
         headers: { "x-termyte-device-id": config.device_id },
         timeout: 3000
     }, (res) => {
@@ -337,8 +354,9 @@ Usage:
   npx termyte             Start MCP Server (Standard IO)
 
 Governance:
-  Termyte intercepts agent actions, evaluates them against a deterministic 
-  sandbox and LLM judge, and records everything in a secure ledger.
+  Termyte provides context_build, guard_action, and execute tools for
+  governed agent workflows. Native tools are governed only when the agent
+  follows the installed Termyte protocol.
 `);
     process.exit(0);
 }
@@ -351,6 +369,70 @@ async function startMcpServer() {
     });
 
     let currentSessionId = uuidv4(); // One session ID per MCP server process startup
+
+    server.tool(
+        "context_build",
+        "Build Termyte context before starting a coding task.",
+        {
+            task: z.string(),
+            cwd: z.string().optional(),
+            project_name: z.string().optional(),
+            agent: z.string().optional(),
+        },
+        async ({ task, cwd, project_name, agent }: any) => {
+            const result = await kernel.contextBuild({
+                task,
+                cwd,
+                project_name,
+                agent,
+                session_id: currentSessionId,
+            });
+            if (result.session_id) currentSessionId = result.session_id;
+            return {
+                content: [{
+                    type: "text",
+                    text: JSON.stringify(result, null, 2)
+                }],
+                isError: false
+            };
+        }
+    );
+
+    server.tool(
+        "guard_action",
+        "Evaluate a risky non-shell action before the agent performs it.",
+        {
+            session_id: z.string().optional(),
+            action_type: z.string(),
+            intent: z.string(),
+            payload: z.any(),
+            cwd: z.string().optional(),
+            project_name: z.string().optional(),
+        },
+        async ({ session_id, action_type, intent, payload, cwd, project_name }: any) => {
+            const result = await kernel.guardAction({
+                session_id: session_id || currentSessionId,
+                action_type,
+                intent,
+                payload,
+                cwd,
+                project_name,
+            });
+            const isBlocked = result.verdict === "BLOCK";
+            const prefix = result.verdict === "WARN"
+                ? "Termyte warning: proceed with caution.\n"
+                : isBlocked
+                    ? "Action blocked by Termyte.\n"
+                    : "";
+            return {
+                content: [{
+                    type: "text",
+                    text: prefix + JSON.stringify(result, null, 2)
+                }],
+                isError: isBlocked
+            };
+        }
+    );
 
     server.tool(
         "execute",
@@ -379,6 +461,9 @@ async function startMcpServer() {
                     isError: true
                 };
             }
+            const warningText = verdict.verdict === "WARN"
+                ? `Termyte warning: ${verdict.warning || verdict.reason}\nAlternative: ${verdict.alternative || "Review prior failure before proceeding."}\n\n`
+                : "";
 
             // 3. Execute via command sandbox
             // We use nativeExec from executor.ts as it implements the OS-level sandbox
@@ -408,7 +493,7 @@ async function startMcpServer() {
 
             const combinedOutput = (result.stdout + "\n" + result.stderr).trim();
             return {
-                content: [{ type: "text", text: combinedOutput || "Command completed with no output." }],
+                content: [{ type: "text", text: warningText + (combinedOutput || "Command completed with no output.") }],
                 isError: result.exit_code !== 0
             };
         }
