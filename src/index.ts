@@ -212,7 +212,7 @@ For TOML-based configs (e.g. Codex):
     try {
         await new Promise((resolve, reject) => {
             const req = https.get("https://mcp.causalos.xyz/v1/health", {
-                headers: { "x-termyte-device-id": termyteConfig.device_id },
+                headers: { "x-causalos-device-id": termyteConfig.device_id },
                 timeout: 5000
             }, (res) => {
                 if (res.statusCode === 200) resolve(true);
@@ -252,31 +252,42 @@ function showLogs() {
     console.log(pc.bold(pc.cyan(`\n📋 Termyte Governance Logs [${deviceId}]\n`)));
 
     const url = new URL(`${apiUrl}/v1/governance/logs`);
-    const req = https.get({
-        hostname: url.hostname,
-        path: url.pathname,
-        headers: { "x-termyte-device-id": deviceId }
+    const req = https.get(url, {
+        headers: { "x-causalos-device-id": deviceId }
     }, (res) => {
+        if (res.statusCode !== 200) {
+            console.error(pc.red(`Server returned status ${res.statusCode}`));
+            process.exit(1);
+        }
         let data = "";
         res.on("data", chunk => data += chunk);
         res.on("end", () => {
-            const logs = JSON.parse(data);
-            if (logs.length === 0) {
+            if (!data.trim()) {
                 console.log(pc.gray("No events recorded yet."));
-            } else {
-                logs.forEach((l: any) => {
-                    const verdictColor = l.verdict === "ALLOW" ? pc.green : l.verdict === "BLOCK" ? pc.red : pc.yellow;
-                    const time = new Date(l.timestamp).toLocaleTimeString();
-                    const outcomeIcon = l.success === true ? pc.green("(v)") : l.success === false ? pc.red("(x)") : pc.gray("(-)");
+                process.exit(0);
+            }
+            try {
+                const logs = JSON.parse(data);
+                if (logs.length === 0) {
+                    console.log(pc.gray("No events recorded yet."));
+                } else {
+                    logs.forEach((l: any) => {
+                        const verdictColor = l.verdict === "ALLOW" ? pc.green : l.verdict === "BLOCK" ? pc.red : pc.yellow;
+                        const time = new Date(l.timestamp).toLocaleTimeString();
+                        const outcomeIcon = l.success === true ? pc.green("(v)") : l.success === false ? pc.red("(x)") : pc.gray("(-)");
 
-                    console.log(`${verdictColor(`[${l.verdict}]`)} ${pc.gray(time)} ${pc.bold(l.tool_name)} ${outcomeIcon}`);
+                        console.log(`${verdictColor(`[${l.verdict}]`)} ${pc.gray(time)} ${pc.bold(l.tool_name)} ${outcomeIcon}`);
 
-                    if (l.verdict === "BLOCK" && l.reason) {
-                        console.log(pc.red(`  Reason: ${l.reason}`));
-                    } else if (l.reason && l.verdict !== "ALLOW") {
-                        console.log(pc.gray(`  Note: ${l.reason}`));
-                    }
-                });
+                        if (l.verdict === "BLOCK" && l.reason) {
+                            console.log(pc.red(`  Reason: ${l.reason}`));
+                        } else if (l.reason && l.verdict !== "ALLOW") {
+                            console.log(pc.gray(`  Note: ${l.reason}`));
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error(pc.red("Failed to parse logs from server."));
+                process.exit(1);
             }
             process.exit(0);
         });

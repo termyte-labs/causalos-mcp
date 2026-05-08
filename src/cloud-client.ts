@@ -2,6 +2,8 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import * as https from 'https';
+import * as http from 'http';
+import { Sanitizer } from './sanitizer.js';
 
 export class CloudKernelClient {
     private deviceId: string | null = null;
@@ -39,6 +41,7 @@ export class CloudKernelClient {
             const options = {
                 method,
                 hostname: url.hostname,
+                port: url.port,
                 path: url.pathname,
                 headers: {
                     'Content-Type': 'application/json',
@@ -47,7 +50,8 @@ export class CloudKernelClient {
                 timeout: 10000
             };
 
-            const req = https.request(options, (res) => {
+            const transport = url.protocol === 'https:' ? https : http;
+            const req = transport.request(options, (res) => {
                 let data = '';
                 res.on('data', (chunk) => data += chunk);
                 res.on('end', () => {
@@ -75,7 +79,7 @@ export class CloudKernelClient {
         return this.request('POST', '/v1/governance/prepare', {
             session_id,
             tool_name,
-            payload_json: payload,
+            payload_json: Sanitizer.redact(payload),
         });
     }
 
