@@ -22,13 +22,12 @@
     "package.json"
   ],
   "keywords": [
-    "mcp",
+    "termyte",
     "ai-agents",
-    "causal-memory",
-    "deterministic-governance",
-    "split-plane-architecture",
     "agent-governance",
-    "high-performance-ai"
+    "terminal-safety",
+    "mcp-server",
+    "3-tier-pipeline"
   ],
   "author": "",
   "license": "ISC",

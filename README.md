@@ -45,6 +45,6 @@ npx termyte log
 ```
 
 ## How it Works
-1. **Prepare**: The agent calls `causal_guard` with the proposed command.
-2. **Judge**: Termyte evaluates the risk level and historical context.
-3. **Commit**: After the agent executes the tool, it records the success/failure to the ledger.
+1. **Prepare**: The agent calls the `execute` tool with a proposed command.
+2. **Judge**: Termyte intercepts the call and evaluates the risk level via the 3-tier safety pipeline.
+3. **Commit**: If allowed and executed, Termyte records the stdout/stderr and exit code to the ledger.

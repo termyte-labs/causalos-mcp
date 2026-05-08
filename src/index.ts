@@ -100,7 +100,7 @@ async function init() {
             console.log(`
   "termyte": {
     "command": "npx",
-    "args": ["-y", "termyte-mcp"],
+    "args": ["-y", "termyte"],
     "env": {
       "TERMYTE_DEVICE_ID": "<device_id>",
       "TERMYTE_API_URL": "https://mcp.causalos.xyz"
@@ -194,7 +194,7 @@ For TOML-based configs (e.g. Codex):
                 newContent = "# Required for MCP support\nrmcp_client = true\n\n" + newContent;
             }
             
-            newContent += `\n[mcp_servers.termyte]\ncommand = "npx"\nargs = ["-y", "termyte-mcp"]\n\n[mcp_servers.termyte.env]\nTERMYTE_DEVICE_ID = "${termyteConfig.device_id}"\nTERMYTE_API_URL = "https://mcp.causalos.xyz"\n`;
+            newContent += `\n[mcp_servers.termyte]\ncommand = "npx"\nargs = ["-y", "termyte"]\n\n[mcp_servers.termyte.env]\nTERMYTE_DEVICE_ID = "${termyteConfig.device_id}"\nTERMYTE_API_URL = "https://mcp.causalos.xyz"\n`;
             fs.writeFileSync(targetPath, newContent);
         }
     }
