@@ -136,15 +136,15 @@ For TOML-based configs (e.g. Codex):
         } catch (e) { }
     }
 
+    termyteConfig.agent = selectedAgent.key;
     if (!termyteConfig.device_id) {
         termyteConfig.device_id = uuidv4();
-        termyteConfig.agent = selectedAgent.key;
         termyteConfig.created_at = new Date().toISOString();
-        fs.writeFileSync(CONFIG_PATH, JSON.stringify(termyteConfig, null, 2));
         console.log(`Generated Device ID: ${pc.green(termyteConfig.device_id)}`);
     } else {
         console.log(`Using existing Device ID: ${pc.green(termyteConfig.device_id)}`);
     }
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(termyteConfig, null, 2));
 
     // 3. Write MCP Config
     const targetPath = selectedAgent.paths.find((p: string) => fs.existsSync(p)) || selectedAgent.paths[0];
@@ -173,7 +173,7 @@ For TOML-based configs (e.g. Codex):
 
         agentConfig.mcpServers.termyte = {
             command: "npx",
-            args: ["-y", "termyte-mcp"],
+            args: ["-y", "termyte"],
             env: {
                 TERMYTE_DEVICE_ID: termyteConfig.device_id,
                 TERMYTE_API_URL: "https://mcp.causalos.xyz"

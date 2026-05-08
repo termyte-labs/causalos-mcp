@@ -1,6 +1,9 @@
 # Termyte — Terminal Governance for Coding Agents
 
-Termyte is a lightweight, terminal-first governance runtime designed to protect your codebase from catastrophic agent actions (like `rm -rf /` or accidental database drops).
+Termyte( Prev. CausalOS) is a lightweight, terminal-first governance runtime designed to protect your codebase from catastrophic agent actions (like `rm -rf /` or accidental database drops).
+Reached 700+ installs on npm in one single week.
+https://www.npmjs.com/package/causalos
+https://www.npmjs.com/package/termyte
 
 It provides a secure "Split-Plane" architecture where your coding agent (Claude Code, Cursor, etc.) proposes actions, and Termyte evaluates them against a deterministic sandbox and an LLM judge before execution.
 
