@@ -336,7 +336,7 @@ Governance:
 async function startMcpServer() {
     const server = new McpServer({
         name: "termyte",
-        version: "0.2.0",
+        version: "0.1.0",
     });
 
     let currentSessionId = uuidv4(); // One session ID per MCP server process startup
