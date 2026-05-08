@@ -48,30 +48,30 @@ async function init() {
 
     const home = os.homedir();
     const agents = [
-        { 
-            name: "Claude Code", 
-            key: "claude", 
+        {
+            name: "Claude Code",
+            key: "claude",
             paths: [path.join(home, ".claude", "settings.json")],
             type: "json",
             restart: "Restart Claude Code (close and reopen the app)"
         },
-        { 
-            name: "Cursor", 
-            key: "cursor", 
+        {
+            name: "Cursor",
+            key: "cursor",
             paths: [path.join(home, ".cursor", "mcp.json"), path.join(home, ".cursor", "config", "mcp.json")],
             type: "json",
             restart: "Restart Cursor to activate MCP server"
         },
-        { 
-            name: "Antigravity", 
-            key: "antigravity", 
+        {
+            name: "Antigravity",
+            key: "antigravity",
             paths: [path.join(home, ".gemini", "antigravity", "mcp_config.json")],
             type: "json",
             restart: "In Antigravity, open ... > Manage MCP Servers and click the refresh button"
         },
-        { 
-            name: "Codex", 
-            key: "codex", 
+        {
+            name: "Codex",
+            key: "codex",
             paths: [path.join(home, ".codex", "config.toml")],
             type: "toml",
             restart: "Restart Codex and run /mcp to confirm termyte tools are loaded"
@@ -111,7 +111,7 @@ For TOML-based configs (e.g. Codex):
 
   [mcp_servers.termyte]
   command = "npx"
-  args = ["-y", "termyte-mcp"]
+  args = ["-y", "termyte"]
 
   [mcp_servers.termyte.env]
   TERMYTE_DEVICE_ID = "<device_id>"
@@ -133,7 +133,7 @@ For TOML-based configs (e.g. Codex):
     if (fs.existsSync(CONFIG_PATH)) {
         try {
             termyteConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
-        } catch (e) {}
+        } catch (e) { }
     }
 
     if (!termyteConfig.device_id) {
@@ -170,7 +170,7 @@ For TOML-based configs (e.g. Codex):
             }
         }
         if (!agentConfig.mcpServers) agentConfig.mcpServers = {};
-        
+
         agentConfig.mcpServers.termyte = {
             command: "npx",
             args: ["-y", "termyte-mcp"],
@@ -193,7 +193,7 @@ For TOML-based configs (e.g. Codex):
             if (!content.includes("rmcp_client = true")) {
                 newContent = "# Required for MCP support\nrmcp_client = true\n\n" + newContent;
             }
-            
+
             newContent += `\n[mcp_servers.termyte]\ncommand = "npx"\nargs = ["-y", "termyte"]\n\n[mcp_servers.termyte.env]\nTERMYTE_DEVICE_ID = "${termyteConfig.device_id}"\nTERMYTE_API_URL = "https://mcp.causalos.xyz"\n`;
             fs.writeFileSync(targetPath, newContent);
         }
@@ -201,8 +201,8 @@ For TOML-based configs (e.g. Codex):
 
     // 4. Verification Step
     const finalContent = fs.readFileSync(targetPath, "utf-8");
-    const verified = selectedAgent.type === "json" 
-        ? finalContent.includes('"termyte"') 
+    const verified = selectedAgent.type === "json"
+        ? finalContent.includes('"termyte"')
         : finalContent.includes("[mcp_servers.termyte]");
 
     console.log(pc.green(`MCP entry verified in ${pc.bold(targetPath)}`));
@@ -235,7 +235,7 @@ For TOML-based configs (e.g. Codex):
     console.log(`  ${pc.bold(selectedAgent.restart)}\n`);
     console.log(`  ${pc.bold("npx termyte log")}      -> see what your agent did`);
     console.log(`  ${pc.bold("npx termyte status")}   -> check connection\n`);
-    
+
     process.exit(0);
 }
 
@@ -268,9 +268,9 @@ function showLogs() {
                     const verdictColor = l.verdict === "ALLOW" ? pc.green : l.verdict === "BLOCK" ? pc.red : pc.yellow;
                     const time = new Date(l.timestamp).toLocaleTimeString();
                     const outcomeIcon = l.success === true ? pc.green("(v)") : l.success === false ? pc.red("(x)") : pc.gray("(-)");
-                    
+
                     console.log(`${verdictColor(`[${l.verdict}]`)} ${pc.gray(time)} ${pc.bold(l.tool_name)} ${outcomeIcon}`);
-                    
+
                     if (l.verdict === "BLOCK" && l.reason) {
                         console.log(pc.red(`  Reason: ${l.reason}`));
                     } else if (l.reason && l.verdict !== "ALLOW") {
@@ -297,7 +297,7 @@ function checkStatus() {
     console.log(`\n${pc.bold("Termyte Status")}`);
     console.log(`  Device ID: ${pc.cyan(config.device_id)}`);
     console.log(`  Agent:     ${pc.cyan(config.agent || "Unknown")}`);
-    
+
     https.get("https://mcp.causalos.xyz/v1/health", {
         headers: { "x-termyte-device-id": config.device_id },
         timeout: 3000
@@ -352,23 +352,23 @@ async function startMcpServer() {
         async ({ command, args, cwd }: any) => {
             const action_payload = { command, args, cwd };
             const session_id = currentSessionId;
-            
+
             // 1. Call prepare — invisible to agent
             const verdict = await kernel.prepareToolCall(session_id, "execute", action_payload);
-            
+
             // 2. If blocked, return structured alternative
             if (verdict.verdict === "BLOCK") {
                 return {
                     content: [{
                         type: "text",
                         text: `Action blocked by Termyte.\n` +
-                              `Reason: ${verdict.reason}\n` +
-                              `Alternative: ${verdict.alternative || "No alternative provided."}`
+                            `Reason: ${verdict.reason}\n` +
+                            `Alternative: ${verdict.alternative || "No alternative provided."}`
                     }],
                     isError: true
                 };
             }
-            
+
             // 3. Execute via command sandbox
             // We use nativeExec from executor.ts as it implements the OS-level sandbox
             const { nativeExec } = await import("./executor.js");
@@ -386,7 +386,7 @@ async function startMcpServer() {
             } else {
                 result = await nativeExec(cmdString);
             }
-            
+
             // 4. Call commit — invisible to agent  
             await kernel.commitToolCall(
                 verdict.tool_call_id || uuidv4(),
@@ -394,7 +394,7 @@ async function startMcpServer() {
                 result.exit_code === 0,
                 result.exit_code
             );
-            
+
             const combinedOutput = (result.stdout + "\n" + result.stderr).trim();
             return {
                 content: [{ type: "text", text: combinedOutput || "Command completed with no output." }],
