@@ -46,5 +46,5 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
   },
-  "exclude": ["node_modules", "dist", "scratch"]
+  "exclude": ["node_modules", "dist", "scratch", "vitest.config.ts"]
 }

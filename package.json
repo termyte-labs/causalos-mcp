@@ -1,10 +1,10 @@
 {
-  "name": "causalos",
-  "version": "0.1.8",
-  "description": "Dual Memory Agent Runtime: Causal Graph Engine + General Memory + Forward Simulation + Backward Inference for AI Agents",
+  "name": "termyte",
+  "version": "0.1.0",
+  "description": "Termyte eats dangerous agent actions before they eat your codebase",
   "main": "dist/index.js",
   "bin": {
-    "causalos": "dist/index.js"
+    "termyte": "dist/index.js"
   },
   "type": "module",
   "scripts": {
@@ -41,8 +41,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/uuid": "^10.0.0",
-    "axios": "^1.15.2",
     "lru-cache": "^11.3.5",
+    "picocolors": "^1.1.1",
     "uuid": "^14.0.0",
     "zod": "^4.3.6"
   }

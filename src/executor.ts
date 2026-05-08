@@ -65,7 +65,7 @@ export function resolveWindowsVerb(verb: string): string {
 }
 
 /**
- * Execute a command natively after it has passed Cloud Governance.
+ * Execute a command natively after it has passed Termyte Governance.
  * Uses execFile (not exec) to prevent shell injection at the OS level.
  */
 export async function nativeExec(rawCommand: string, timeoutMs = 30_000): Promise<ExecutionResult> {

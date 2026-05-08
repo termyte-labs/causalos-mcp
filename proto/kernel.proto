@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package causalos.kernel;
+package termyte.kernel;
 
 service KernelService {
     // 1. Lifecycle & Planning

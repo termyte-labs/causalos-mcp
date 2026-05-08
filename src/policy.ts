@@ -1,7 +1,7 @@
 export type GovernanceAction = "ALLOW" | "BLOCK" | "UNCERTAIN";
 
-export function getCausalEnv(): "production" | "development" {
-  return process.env.CAUSAL_ENV === "production" ? "production" : "development";
+export function getTermyteEnv(): "production" | "development" {
+  return process.env.TERMYTE_ENV === "production" ? "production" : "development";
 }
 
 export function normalizeVerdict(
@@ -14,7 +14,7 @@ export function normalizeVerdict(
 }
 
 export function applyUnifiedPolicy(action: GovernanceAction): GovernanceAction {
-  const env = getCausalEnv();
+  const env = getTermyteEnv();
   if (env === "production") {
     return action === "ALLOW" ? "ALLOW" : "BLOCK";
   }

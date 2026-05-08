@@ -48,7 +48,7 @@ export class HotCache {
     }
 
     private static getCachePath(): string {
-        const dir = path.join(os.homedir(), '.causalos');
+        const dir = path.join(os.homedir(), '.termyte');
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }

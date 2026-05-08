@@ -3,7 +3,7 @@ import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 
-const DB_PATH = join(homedir(), ".causalos", "memory.db");
+const DB_PATH = join(homedir(), ".termyte", "memory.db");
 
 async function dump() {
   if (!existsSync(DB_PATH)) {

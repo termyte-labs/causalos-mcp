@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 
 /**
- * Sanitizer: Privacy-First Data Redaction for CausalOS
+ * Sanitizer: Privacy-First Data Redaction for Termyte
  * 
  * This utility ensures that sensitive data (API keys, secrets, PII) is redacted 
  * locally within the MCP sidecar before any trajectory data is streamed to the Cloud Runtime.
