@@ -19,7 +19,12 @@ describe("Offline Resilience", () => {
     });
 
     it("should handle failed commit gracefully", async () => {
-        const result = await client.commitToolCall("tc1", { stdout: "" }, true, 0);
+        const result = await client.commitToolCall({
+            tool_call_id: "tc1",
+            outcome: { stdout: "" },
+            success: true,
+            exit_code: 0
+        });
         expect(result.status).toBe("local_only");
     });
 });

@@ -68,9 +68,19 @@ export class KernelClient {
     }
   }
 
-  async commitToolCall(tool_call_id: string, outcome: any, success: boolean, exitCode?: number): Promise<any> {
+  async commitToolCall(params: {
+    tool_call_id: string;
+    outcome?: any;
+    success: boolean;
+    exit_code?: number;
+    command_args?: any;
+    stdout?: string;
+    stderr?: string;
+    duration_ms?: number;
+    parent_event_hash?: string | null;
+  }): Promise<any> {
     try {
-        return await this.cloudClient.commitToolCall(tool_call_id, outcome, success, exitCode);
+        return await this.cloudClient.commitToolCall(params);
     } catch (err) {
         // Log locally if cloud is down, but don't crash
         console.error(`[KernelClient] Failed to commit outcome: ${err}`);

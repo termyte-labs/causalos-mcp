@@ -7,6 +7,7 @@ export interface ExecutionResult {
   stdout: string;
   stderr: string;
   exit_code: number;
+  duration_ms: number;
 }
 
 /**
@@ -78,6 +79,7 @@ export async function nativeExec(rawCommand: string, timeoutMs = 30_000): Promis
   const verb = resolveWindowsVerb(rawVerb);
   const args = tokens.slice(1);
 
+  const start = Date.now();
   try {
     const { stdout, stderr } = await execFileAsync(verb, args, {
       timeout: timeoutMs,
@@ -85,12 +87,13 @@ export async function nativeExec(rawCommand: string, timeoutMs = 30_000): Promis
       windowsHide: true,
       shell: false,
     });
-    return { stdout, stderr, exit_code: 0 };
+    return { stdout, stderr, exit_code: 0, duration_ms: Date.now() - start };
   } catch (err: any) {
     return {
       stdout: err.stdout ?? "",
       stderr: err.stderr ?? err.message,
       exit_code: err.code ?? 1,
+      duration_ms: Date.now() - start
     };
   }
 }

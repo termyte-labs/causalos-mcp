@@ -289,14 +289,43 @@ function showLogs() {
                     console.log(pc.gray("No events recorded yet."));
                 } else {
                     logs.forEach((l: any) => {
-                        const verdictColor = l.verdict === "ALLOW" ? pc.green : l.verdict === "BLOCK" ? pc.red : pc.yellow;
+                        const verdictColor = l.verdict === "BLOCK" ? pc.red : (l.verdict === "ALLOW" ? pc.green : pc.yellow);
                         const time = new Date(l.timestamp).toLocaleTimeString();
-                        const outcomeIcon = l.success === true ? pc.green("(v)") : l.success === false ? pc.red("(x)") : pc.gray("(-)");
+                        const exitCode = l.exit_code !== null ? `(${l.exit_code})` : "";
+                        const duration = l.duration_ms !== null ? pc.gray(`${l.duration_ms}ms`) : "";
+                        
+                        let header = `${verdictColor(`[${l.verdict}]`)} ${pc.gray(time)} ${pc.bold(l.tool_name)} ${exitCode} ${duration}`;
+                        if (l.verdict === "ALLOW") {
+                            const allowColor = l.exit_code === 0 ? pc.green : pc.yellow;
+                            header = `${allowColor(`[${l.verdict}]`)} ${pc.gray(time)} ${pc.bold(l.tool_name)} ${exitCode} ${duration}`;
+                        }
+                        
+                        console.log(header);
 
-                        console.log(`${verdictColor(`[${l.verdict}]`)} ${pc.gray(time)} ${pc.bold(l.tool_name)} ${outcomeIcon}`);
+                        if (l.verdict === "BLOCK" || (l.success === false && l.exit_code !== 0)) {
+                            let commandToDisplay = "";
+                            if (l.command_args) {
+                                const argsStr = typeof l.command_args === 'string' ? l.command_args : JSON.stringify(l.command_args);
+                                commandToDisplay = argsStr;
+                            } else if (l.payload_json) {
+                                // Fallback to payload_json if command_args is null (blocked actions)
+                                const payload = typeof l.payload_json === 'string' ? JSON.parse(l.payload_json) : l.payload_json;
+                                if (payload.command) {
+                                    commandToDisplay = `${payload.command} ${payload.args ? JSON.stringify(payload.args) : ""}`;
+                                } else {
+                                    commandToDisplay = JSON.stringify(payload);
+                                }
+                            }
 
-                        if (l.verdict === "BLOCK" && l.reason) {
-                            console.log(pc.red(`  Reason: ${l.reason}`));
+                            if (commandToDisplay) {
+                                console.log(`  Command: ${commandToDisplay}`);
+                            }
+                            if (l.reason) {
+                                console.log(`  Reason: ${l.reason}`);
+                            }
+                            if (l.stderr_summary) {
+                                console.log(pc.red(pc.dim(`  Stderr: ${l.stderr_summary}`)));
+                            }
                         } else if (l.reason && l.verdict !== "ALLOW") {
                             console.log(pc.gray(`  Note: ${l.reason}`));
                         }
@@ -484,12 +513,23 @@ async function startMcpServer() {
             }
 
             // 4. Call commit — invisible to agent  
-            await kernel.commitToolCall(
-                verdict.tool_call_id || uuidv4(),
-                { stdout: result.stdout, stderr: result.stderr },
-                result.exit_code === 0,
-                result.exit_code
-            );
+            const params = {
+                tool_call_id: verdict.tool_call_id || uuidv4(),
+                outcome: { stdout: result.stdout, stderr: result.stderr },
+                success: result.exit_code === 0,
+                exit_code: result.exit_code,
+                command_args: args,
+                stdout: result.stdout,
+                stderr: result.stderr,
+                duration_ms: result.duration_ms,
+                parent_event_hash: null
+            };
+
+            try {
+                await kernel.commitToolCall(params);
+            } catch (err) {
+                // Fail silently on commit errors to avoid disrupting agent flow
+            }
 
             const combinedOutput = (result.stdout + "\n" + result.stderr).trim();
             return {

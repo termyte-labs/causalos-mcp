@@ -43,6 +43,19 @@ Agents should follow this workflow:
 - `WARN`: proceed, but inject the warning/instruction patch into the agent context.
 - `BLOCK`: do not perform the action.
 
+## Auditing & Traces
+
+Termyte maintains a detailed causal ledger of every action taken by the agent. You can inspect the audit traces in your terminal:
+
+```bash
+npx termyte log
+```
+
+This will show you:
+- **Sequential Execution Chain**: Reconstruct exactly what the agent did.
+- **Detailed Outcomes**: See exit codes, execution duration, and redacted output summaries.
+- **Blocked Actions**: Understand why a specific command was blocked, even if it never ran.
+
 ## Cloud Data Posture
 
 Termyte sends sanitized task/action/outcome summaries to the cloud runtime by default. Redaction runs before transmission, judge input, persistence, logs, retrieval, and failure-memory storage.

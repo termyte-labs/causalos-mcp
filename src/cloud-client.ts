@@ -107,12 +107,27 @@ export class CloudKernelClient {
         });
     }
 
-    async commitToolCall(tool_call_id: string, outcome: any, success: boolean, exitCode?: number) {
+    async commitToolCall(params: {
+        tool_call_id: string;
+        outcome?: any;
+        success: boolean;
+        exit_code?: number;
+        command_args?: any;
+        stdout?: string;
+        stderr?: string;
+        duration_ms?: number;
+        parent_event_hash?: string | null;
+    }) {
         return this.request('POST', '/v1/governance/commit', {
-            tool_call_id,
-            outcome_json: Sanitizer.redact(outcome),
-            success,
-            exit_code: exitCode
+            tool_call_id: params.tool_call_id,
+            outcome_json: params.outcome ? Sanitizer.redact(params.outcome) : undefined,
+            success: params.success,
+            exit_code: params.exit_code,
+            command_args: params.command_args ? Sanitizer.redact(params.command_args) : undefined,
+            stdout: params.stdout ? Sanitizer.redact(params.stdout) : undefined,
+            stderr: params.stderr ? Sanitizer.redact(params.stderr) : undefined,
+            duration_ms: params.duration_ms,
+            parent_event_hash: params.parent_event_hash
         });
     }
 

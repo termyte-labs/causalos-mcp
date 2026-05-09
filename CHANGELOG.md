@@ -2,6 +2,21 @@
 
 All notable changes to the Termyte project will be documented in this file.
 
+## [0.1.4] - 2026-05-10
+
+### 🛡️ Detailed Audit Traces & Enhanced Governance
+- **Detailed Audit Traces**: Extended the causal ledger to capture full execution context:
+  - `command_args`: The complete arguments array (redacted).
+  - `exit_code`: Capture the result code of shell executions.
+  - `duration_ms`: High-precision timing for command execution.
+  - `stdout/stderr_summary`: Captures the first 200 characters of output (redacted) for debugging.
+- **Enhanced `termyte log`**:
+  - Color-coded terminal output for better readability.
+  - Automatic fallback to `payload_json` for **BLOCKED** actions, ensuring you can see what was blocked and why.
+  - Displays command duration and exit status for all executed actions.
+- **Improved Redaction**: Sanitizer now redacts sensitive info across all new audit fields.
+- **Database Refactor**: Decoupled SQL migrations from the runtime for better manual control and production stability.
+
 ## [1.1.0] - 2026-05-08
 
 ### 🛡️ Termyte Production Release & Rebranding

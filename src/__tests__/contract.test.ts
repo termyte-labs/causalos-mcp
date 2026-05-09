@@ -68,7 +68,12 @@ describe("Cloud contract", () => {
     it("commitToolCall calls /v1/governance/commit with correct payload", async () => {
         const client = new CloudKernelClient();
         const outcome = { stdout: "ok" };
-        await client.commitToolCall("tc_1", outcome, true, 0);
+        await client.commitToolCall({
+            tool_call_id: "tc_1",
+            outcome,
+            success: true,
+            exit_code: 0
+        });
 
         expect(requests[0]?.url).toBe("/v1/governance/commit");
         expect(requests[0]?.method).toBe("POST");
