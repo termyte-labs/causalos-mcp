@@ -19,6 +19,8 @@ Coding agents fail in two expensive ways:
 
 Termyte blocks clearly destructive actions, warns on similar prior failures, redacts sensitive data, and stores sanitized telemetry in the cloud runtime so future tasks can benefit from prior outcomes.
 
+The cloud runtime also persists durable session state, so a later `context_build` can immediately surface the last failure or warning from the same session even after a restart.
+
 ## Install
 
 ```bash
