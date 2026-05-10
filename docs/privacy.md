@@ -1,30 +1,25 @@
-# Privacy & Security
+# Privacy and Redaction
 
-CausalOS was built with a "Privacy First, Privacy Only" philosophy.
+Termyte performs redaction in the MCP bridge before data is sent to the cloud runtime.
 
-## Local-First Architecture
+## What Gets Redacted
 
-By default, 100% of the intelligence and data storage happens on your local machine.
+- Common secret formats such as API keys and bearer tokens.
+- Private key blocks.
+- Sensitive JSON fields such as `password`, `token`, `secret`, `key`, and `credential`.
 
-- **Storage**: All task logs, code snippets, and failure patterns are stored in a local SQLite database at `~/.causalos/memory.db`.
-- **Compute**: Semantic matching and causal inference are performed locally within the Node.js process.
-- **Networking**: CausalOS does *not* send your data to any external cloud service or telemetry engine.
+## Why It Exists
 
-## Data Encryption
+The cloud runtime should receive sanitized summaries, not raw secrets or full terminal dumps.
 
-Since the data is stored locally, it is as secure as your file system. We recommend using full-disk encryption (like FileVault or BitLocker) to secure your local environment.
+## Operational Rule
 
-## Transparency
+Redaction happens before:
 
-You can audit exactly what CausalOS knows about you at any time:
+- network transmission
+- ledger persistence
+- failure memory storage
+- judge input
+- logs and retrieval queries
 
-1.  **Direct SQL**: Open `~/.causalos/memory.db` with any SQLite viewer.
-2.  **Tooling**: Run `causal_history` or `causal_graph` through your MCP client to see the distilled patterns.
-
-## Cloud Opt-In (Coming Soon)
-
-Future versions may offer "Intelligence Shairng" as an opt-in feature. This would allow you to download anonymous failure patterns found by other developers to improve your agent's initial performance. This will always be **opt-in** and strictly **anonymous**.
-
----
-
-[← Agent Integration](agent-integration.md) | [Architecture →](architecture.md)
+That is the boundary that keeps the system usable.

@@ -20,7 +20,7 @@ All notable changes to the Termyte project will be documented in this file.
 ## [1.1.0] - 2026-05-08
 
 ### 🛡️ Termyte Production Release & Rebranding
-- **Official Rebranding**: Fully transitioned project from CausalOS to **Termyte**.
+- **Official Rebranding**: Fully transitioned project to **Termyte**.
 - **Public Domain Migration**: Updated all API endpoints to `mcp.termyte.xyz` and documentation to `docs.termyte.ai`.
 - **Governance Refactor**: Standardized on the explicit 3-tool MEP governance model (`context_build`, `guard_action`, `execute`).
 - **Safety Memory**: Integrated "Failure Memory" to prevent agents from repeating stochastic hallucinations.
@@ -48,7 +48,7 @@ All notable changes to the Termyte project will be documented in this file.
 ## [0.1.0] - 2026-05-02
 
 ### 🛡️ Security Hardening & Rebranding
-This version marks the official transition to **CausalOS** (formerly `causalos-mcp`) and introduces a hardened execution environment for AI agents.
+This version marks the official transition to **Termyte** and introduces a hardened execution environment for AI agents.
 
 ### Added
 - **CommandSandbox**: Replaced insecure regex filtering with a robust, explicit allowlist-based execution gate.
@@ -58,11 +58,11 @@ This version marks the official transition to **CausalOS** (formerly `causalos-m
   - **Shell Metacharacter Rejection**: Blocks pipes, redirects, and substitutions at the validation layer.
   - **Direct Execution**: Switched from `exec()` to `execFile()` to neutralize shell injection at the OS level.
 - **Fail-Closed Governance**: Modified the MCP bridge to fail-closed (`SOFT_BLOCK`) when the Cloud Runtime is unreachable, ensuring governance integrity by default.
-- **Enhanced Telemetry Persistence**: Added session-aware telemetry buffering that persists pending records to `~/.causalos/telemetry/` during network outages.
+- **Enhanced Telemetry Persistence**: Added session-aware telemetry buffering that persists pending records to `~/.termyte/telemetry/` during network outages.
 
 ### Changed
-- **Rebranding**: Project renamed from `causalos-mcp` to `causalos`.
-- **Infrastructure**: Updated default `CAUSAL_RUNTIME_URL` to `https://mcp.causalos.xyz/`.
+- **Rebranding**: Project renamed to `termyte`.
+- **Infrastructure**: Updated default `CAUSAL_RUNTIME_URL` to `https://mcp.termyte.xyz/`.
 - **Console Feedback**: Professionalized startup logs to display Governance status (Offline-Resilient) and Telemetry mode (Async-Batched).
 
 ### Fixed

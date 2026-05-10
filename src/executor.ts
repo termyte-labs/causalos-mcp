@@ -57,6 +57,9 @@ export function tokenize(command: string): string[] {
  * Ensures batch commands on Windows are invoked with .cmd extension.
  */
 export function resolveWindowsVerb(verb: string): string {
+  if (verb.toLowerCase() === "node" || verb.toLowerCase() === "node.exe") {
+    return process.execPath;
+  }
   if (process.platform !== "win32") return verb;
   const batchCommands = ["npm", "npx", "yarn", "pnpm", "tsc", "cargo"];
   if (batchCommands.includes(verb.toLowerCase())) {

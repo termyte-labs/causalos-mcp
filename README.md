@@ -1,14 +1,14 @@
-# Termyte - Governed Agent Actions + Failure Memory
+# Termyte MCP
 
-Termyte is an MCP-first governance and failure-memory layer for solo developers using coding agents.
+Termyte is an MCP-first governance and failure-memory layer for coding agents.
 
 It gives agents three tools:
 
 - `context_build`: call before a task to retrieve prior failures, constraints, and safer instructions.
-- `guard_action`: call before risky non-shell actions such as file deletion, git mutation, DB mutation, package publishing, network execution, or secret access.
+- `guard_action`: call before risky non-shell actions such as file deletion, git mutation, database mutation, package publishing, network execution, or secret access.
 - `execute`: run shell commands through Termyte governance and failure-memory checks.
 
-Termyte does not forcibly intercept native agent tools through MCP. Native tools are governed only when the agent follows the installed Termyte protocol. Future runtime-wrapper modes such as `termyte run codex` are separate from this MCP MEP.
+Termyte does not forcibly intercept native agent tools through MCP. Native tools are governed only when the host agent follows the installed Termyte protocol.
 
 ## Why It Exists
 
@@ -17,7 +17,7 @@ Coding agents fail in two expensive ways:
 1. They run destructive actions too casually.
 2. They repeat failed approaches because they do not remember what went wrong.
 
-Termyte blocks clearly destructive actions, warns on similar prior failures, redacts secrets, and stores sanitized telemetry in the cloud runtime so future tasks can benefit from prior outcomes.
+Termyte blocks clearly destructive actions, warns on similar prior failures, redacts sensitive data, and stores sanitized telemetry in the cloud runtime so future tasks can benefit from prior outcomes.
 
 ## Install
 
@@ -25,7 +25,7 @@ Termyte blocks clearly destructive actions, warns on similar prior failures, red
 npx termyte init
 ```
 
-`init` installs MCP config for the detected agent and writes `TERMYTE_PROTOCOL.md` next to the agent config. Protocol compliance must be verified per agent because MCP config alone does not guarantee the agent will call governance tools before native tools.
+`init` installs MCP config for the detected agent and writes `TERMYTE_PROTOCOL.md` next to the agent config.
 
 ## Agent Protocol
 
@@ -40,24 +40,9 @@ Agents should follow this workflow:
 ## Verdicts
 
 - `ALLOW`: proceed.
-- `WARN`: proceed, but inject the warning/instruction patch into the agent context.
+- `WARN`: proceed, but inject the warning or instruction patch into the agent context.
 - `BLOCK`: do not perform the action.
-
-## Auditing & Traces
-
-Termyte maintains a detailed causal ledger of every action taken by the agent. You can inspect the audit traces in your terminal:
-
-```bash
-npx termyte log
-```
-
-This will show you:
-- **Sequential Execution Chain**: Reconstruct exactly what the agent did.
-- **Detailed Outcomes**: See exit codes, execution duration, and redacted output summaries.
-- **Blocked Actions**: Understand why a specific command was blocked, even if it never ran.
 
 ## Cloud Data Posture
 
-Termyte sends sanitized task/action/outcome summaries to the cloud runtime by default. Redaction runs before transmission, judge input, persistence, logs, retrieval, and failure-memory storage.
-
-
+Termyte sends sanitized task, action, and outcome summaries to the cloud runtime by default. Redaction runs before transmission, judge input, persistence, logs, retrieval, and failure-memory storage.

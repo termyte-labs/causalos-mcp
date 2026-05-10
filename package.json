@@ -12,6 +12,7 @@
     "start": "node dist/index.js",
     "dev": "tsc --watch",
     "test": "vitest run",
+    "benchmark:governance": "node scripts/eval_governance.mjs",
     "benchmark:car": "node scripts/car_benchmark.mjs",
     "prepublishOnly": "npm run build"
   },

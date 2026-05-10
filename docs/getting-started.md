@@ -1,53 +1,48 @@
 # Getting Started
 
-Setup CausalOS in minutes and give your agent a persistent memory.
+Set up Termyte in minutes and give your agent governed memory.
 
 ## Prerequisites
 
-- **Node.js**: v18 or higher.
-- **MCP Client**: Claude Desktop, VS Code (via MCP extension), or any other MCP-compliant interface.
+- Node.js v18 or higher.
+- An MCP client such as Claude Desktop, VS Code with MCP support, or another compatible host.
 
 ## Installation
 
-CausalOS is designed to be run via `npx` for zero-configuration setup.
-
-### Global Installation (Optional)
-If you prefer to install it globally:
 ```bash
-npm install -g causalos
+npm install -g termyte
+```
+
+Or use it directly:
+
+```bash
+npx termyte
 ```
 
 ## Configuration
 
 ### Claude Desktop
-Edit your configuration file:
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
-Add the following entry:
 ```json
 {
   "mcpServers": {
-    "causalos": {
+    "termyte": {
       "command": "npx",
-      "args": ["-y", "causalos"]
+      "args": ["-y", "termyte"]
     }
   }
 }
 ```
 
 ### Environment Variables
-By default, CausalOS stores data in `~/.causalos/`. You can override this:
 
-- `CAUSALOS_PATH`: Path to the directory where `memory.db` will be stored.
+- `TERMYTE_DEVICE_ID`: optional explicit device identifier.
+- `TERMYTE_API_URL`: optional override for the cloud runtime URL.
 
 ## Verifying the Setup
 
-After restarting your MCP client, ask your agent:
-> "Do you have the CausalOS tools available?"
-
-The agent should confirm it has access to `context_build`, `causal_check`, etc.
+After restarting your MCP client, ask your agent whether the `context_build`, `guard_action`, and `execute` tools are available.
 
 ---
 
-[← Overview](index.md) | [Core Concepts →](core-concepts.md)
+[Overview](index.md) | [Core Concepts](core-concepts.md)
