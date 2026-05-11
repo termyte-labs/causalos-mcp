@@ -7,6 +7,9 @@ import { Sanitizer } from './sanitizer.js';
 
 export class CloudKernelClient {
     private deviceId: string | null = null;
+    private authToken: string | null = null;
+    private orgId: string | null = null;
+    private agent: string | null = null;
     private baseURL: string;
 
     constructor() {
@@ -33,20 +36,45 @@ export class CloudKernelClient {
         throw new Error("TERMYTE_DEVICE_ID not found. Run 'npx termyte init' first.");
     }
 
+    private async getConfig(): Promise<any> {
+        const configPath = path.join(os.homedir(), '.termyte', 'config.json');
+        try {
+            return JSON.parse(await fs.readFile(configPath, 'utf-8'));
+        } catch (e) {
+            return {};
+        }
+    }
+
+    private async getAuthHeaders(): Promise<Record<string, string>> {
+        const deviceId = await this.getDeviceId();
+        if (!this.authToken || !this.orgId || !this.agent) {
+            const config = await this.getConfig();
+            this.authToken = process.env.TERMYTE_AUTH_TOKEN || config.auth_token || null;
+            this.orgId = process.env.TERMYTE_ORG_ID || config.org_id || null;
+            this.agent = process.env.TERMYTE_AGENT || config.agent || null;
+        }
+
+        const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+            'x-termyte-device-id': deviceId
+        };
+        if (this.authToken) headers['x-termyte-auth-token'] = this.authToken;
+        if (this.orgId) headers['x-termyte-org-id'] = this.orgId;
+        if (this.agent) headers['x-termyte-agent'] = this.agent;
+        return headers;
+    }
+
     private async request(method: string, endpoint: string, body?: any): Promise<any> {
         const url = new URL(endpoint, this.baseURL);
-        const deviceId = await this.getDeviceId();
+        const headers = await this.getAuthHeaders();
 
         return new Promise((resolve, reject) => {
             const options = {
                 method,
                 hostname: url.hostname,
                 port: url.port,
-                path: url.pathname,
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-termyte-device-id': deviceId
-                },
+                path: `${url.pathname}${url.search}`,
+                headers,
                 timeout: 10000
             };
 
@@ -73,6 +101,14 @@ export class CloudKernelClient {
             if (body) req.write(JSON.stringify(body));
             req.end();
         });
+    }
+
+    async startDeviceAuth(input: { device_id: string; agent?: string; install_label?: string }) {
+        return this.request('POST', '/v1/auth/device/start', input);
+    }
+
+    async pollDeviceAuth(device_code: string) {
+        return this.request('POST', '/v1/auth/device/poll', { device_code });
     }
 
     async prepareToolCall(session_id: string, tool_name: string, payload: any) {
@@ -133,5 +169,10 @@ export class CloudKernelClient {
 
     async getMetrics() {
         return this.request('GET', '/metrics');
+    }
+
+    async getTimeline(session_id?: string) {
+        const suffix = session_id ? `?session_id=${encodeURIComponent(session_id)}` : '';
+        return this.request('GET', `/v1/governance/timeline${suffix}`);
     }
 }

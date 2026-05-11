@@ -13,7 +13,7 @@ describe("Cloud contract", () => {
             req.on("data", (d) => chunks.push(d));
             req.on("end", () => {
                 const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf-8")) : {};
-                requests.push({ url: req.url || "", body, method: req.method });
+                requests.push({ url: req.url || "", body, method: req.method, headers: req.headers });
                 res.setHeader("content-type", "application/json");
                 if ((req.url || "").startsWith("/v1/governance/prepare")) {
                     res.end(JSON.stringify({ verdict: "ALLOW", reason: "ok", tool_call_id: "tc_1" }));
@@ -41,6 +41,9 @@ describe("Cloud contract", () => {
         // Mock environment variables
         process.env.TERMYTE_API_URL = baseUrl;
         process.env.TERMYTE_DEVICE_ID = "test-device-id";
+        process.env.TERMYTE_AUTH_TOKEN = "test-auth-token";
+        process.env.TERMYTE_ORG_ID = "test-org-id";
+        process.env.TERMYTE_AGENT = "vitest";
     });
 
     beforeEach(() => {
@@ -58,6 +61,9 @@ describe("Cloud contract", () => {
 
         expect(requests[0]?.url).toBe("/v1/governance/prepare");
         expect(requests[0]?.method).toBe("POST");
+        expect(requests[0]?.headers["x-termyte-auth-token"]).toBe("test-auth-token");
+        expect(requests[0]?.headers["x-termyte-org-id"]).toBe("test-org-id");
+        expect(requests[0]?.headers["x-termyte-agent"]).toBe("vitest");
         expect(requests[0]?.body).toMatchObject({
             session_id: "session-1",
             tool_name: "execute",

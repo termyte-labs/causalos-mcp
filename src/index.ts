@@ -9,6 +9,8 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import * as https from "https";
+import * as http from "http";
+import { execFile } from "child_process";
 import { v4 as uuidv4 } from "uuid";
 
 const CONFIG_DIR = path.join(os.homedir(), ".termyte");
@@ -47,6 +49,112 @@ function syncPrompt(question: string): string {
     const buffer = Buffer.alloc(1024);
     const bytesRead = fs.readSync(0, buffer, 0, 1024, null);
     return buffer.toString('utf8', 0, bytesRead).trim();
+}
+
+function sleep(ms: number) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function openBrowser(url: string) {
+    const platform = process.platform;
+    const command = platform === "win32" ? "cmd" : platform === "darwin" ? "open" : "xdg-open";
+    const args = platform === "win32" ? ["/c", "start", "", url] : [url];
+    try {
+        const child = execFile(command, args, { windowsHide: true });
+        child.on("error", () => {});
+    } catch {}
+}
+
+async function apiRequest(method: string, endpoint: string, body?: any, token?: string): Promise<any> {
+    const apiUrl = process.env.TERMYTE_API_URL || "https://mcp.termyte.xyz";
+    const url = new URL(endpoint, apiUrl);
+    return new Promise((resolve, reject) => {
+        const transport = url.protocol === "https:" ? https : http;
+        const req = transport.request({
+            method,
+            hostname: url.hostname,
+            port: url.port,
+            path: `${url.pathname}${url.search}`,
+            timeout: 10000,
+            headers: {
+                "content-type": "application/json",
+                ...(token ? { "x-termyte-auth-token": token } : {})
+            }
+        }, (res) => {
+            let data = "";
+            res.on("data", chunk => data += chunk);
+            res.on("end", () => {
+                try {
+                    const parsed = data ? JSON.parse(data) : {};
+                    if (res.statusCode && res.statusCode >= 400) {
+                        reject(new Error(parsed.reason || parsed.message || `HTTP ${res.statusCode}`));
+                    } else {
+                        resolve(parsed);
+                    }
+                } catch {
+                    reject(new Error("Invalid JSON response from Termyte API"));
+                }
+            });
+        });
+        req.on("error", reject);
+        req.on("timeout", () => {
+            req.destroy();
+            reject(new Error("Timeout"));
+        });
+        if (body) req.write(JSON.stringify(body));
+        req.end();
+    });
+}
+
+function runtimeHeaders(config: any) {
+    return {
+        "x-termyte-device-id": config.device_id,
+        ...(config.auth_token ? { "x-termyte-auth-token": config.auth_token } : {}),
+        ...(config.org_id ? { "x-termyte-org-id": config.org_id } : {}),
+        ...(config.agent ? { "x-termyte-agent": config.agent } : {})
+    };
+}
+
+async function authenticateDevice(termyteConfig: any, selectedAgent: any) {
+    if (termyteConfig.auth_token && termyteConfig.org_id) {
+        console.log(`Using authenticated org: ${pc.cyan(termyteConfig.org_id)}`);
+        return termyteConfig;
+    }
+
+    const installLabel = `${os.hostname()} / ${selectedAgent.name}`;
+    const start = await apiRequest("POST", "/v1/auth/device/start", {
+        device_id: termyteConfig.device_id,
+        agent: selectedAgent.key,
+        install_label: installLabel
+    });
+
+    console.log(`\n${pc.bold("Sign in to Termyte")}`);
+    console.log(`  Opening: ${pc.cyan(start.verification_uri_complete)}`);
+    console.log(`  Code:    ${pc.bold(start.user_code)}\n`);
+    openBrowser(start.verification_uri_complete);
+
+    const deadline = Date.now() + Math.min((start.expires_in || 900) * 1000, 180000);
+    while (Date.now() < deadline) {
+        await sleep((start.interval || 2) * 1000);
+        const poll = await apiRequest("POST", "/v1/auth/device/poll", {
+            device_code: start.device_code
+        });
+        if (poll.status === "approved") {
+            termyteConfig.auth_token = poll.auth_token;
+            termyteConfig.user_id = poll.user_id;
+            termyteConfig.org_id = poll.org_id;
+            termyteConfig.plan = poll.plan || "free";
+            termyteConfig.max_active_agents = poll.max_active_agents || 1;
+            termyteConfig.authenticated_at = new Date().toISOString();
+            console.log(pc.green(`Authenticated to ${poll.plan || "free"} org ${poll.org_id}`));
+            return termyteConfig;
+        }
+        if (poll.status === "expired" || poll.status === "denied") {
+            throw new Error(`Browser authentication ${poll.status}. Run npx termyte init again.`);
+        }
+    }
+
+    throw new Error("Timed out waiting for browser authentication.");
 }
 
 async function init() {
@@ -104,11 +212,14 @@ async function init() {
             console.log(`\n${pc.yellow("Manual setup required.")}`);
             console.log("\nAdd this to your MCP config under mcpServers:");
             console.log(`
-  "termyte": {
+    "termyte": {
     "command": "npx",
     "args": ["-y", "termyte"],
     "env": {
       "TERMYTE_DEVICE_ID": "<device_id>",
+      "TERMYTE_AUTH_TOKEN": "<auth_token>",
+      "TERMYTE_ORG_ID": "<org_id>",
+      "TERMYTE_AGENT": "<agent>",
       "TERMYTE_API_URL": "https://mcp.termyte.xyz"
     }
   }
@@ -121,6 +232,9 @@ For TOML-based configs (e.g. Codex):
 
   [mcp_servers.termyte.env]
   TERMYTE_DEVICE_ID = "<device_id>"
+  TERMYTE_AUTH_TOKEN = "<auth_token>"
+  TERMYTE_ORG_ID = "<org_id>"
+  TERMYTE_AGENT = "<agent>"
   TERMYTE_API_URL = "https://mcp.termyte.xyz"
 `);
             process.exit(0);
@@ -150,6 +264,9 @@ For TOML-based configs (e.g. Codex):
     } else {
         console.log(`Using existing Device ID: ${pc.green(termyteConfig.device_id)}`);
     }
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(termyteConfig, null, 2));
+
+    termyteConfig = await authenticateDevice(termyteConfig, selectedAgent);
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(termyteConfig, null, 2));
 
     // 3. Write MCP Config
@@ -182,6 +299,9 @@ For TOML-based configs (e.g. Codex):
             args: ["-y", "termyte"],
             env: {
                 TERMYTE_DEVICE_ID: termyteConfig.device_id,
+                TERMYTE_AUTH_TOKEN: termyteConfig.auth_token,
+                TERMYTE_ORG_ID: termyteConfig.org_id,
+                TERMYTE_AGENT: selectedAgent.key,
                 TERMYTE_API_URL: "https://mcp.termyte.xyz"
             }
         };
@@ -204,7 +324,7 @@ For TOML-based configs (e.g. Codex):
                 newContent = "# Required for MCP support\nrmcp_client = true\n\n" + newContent;
             }
 
-            newContent += `\n[mcp_servers.termyte]\ncommand = "npx"\nargs = ["-y", "termyte"]\n\n[mcp_servers.termyte.env]\nTERMYTE_DEVICE_ID = "${termyteConfig.device_id}"\nTERMYTE_API_URL = "https://mcp.termyte.xyz"\n`;
+            newContent += `\n[mcp_servers.termyte]\ncommand = "npx"\nargs = ["-y", "termyte"]\n\n[mcp_servers.termyte.env]\nTERMYTE_DEVICE_ID = "${termyteConfig.device_id}"\nTERMYTE_AUTH_TOKEN = "${termyteConfig.auth_token}"\nTERMYTE_ORG_ID = "${termyteConfig.org_id}"\nTERMYTE_AGENT = "${selectedAgent.key}"\nTERMYTE_API_URL = "https://mcp.termyte.xyz"\n`;
             fs.writeFileSync(targetPath, newContent);
         }
         const protocolPath = path.join(targetDir, "TERMYTE_PROTOCOL.md");
@@ -227,7 +347,7 @@ For TOML-based configs (e.g. Codex):
     try {
         await new Promise((resolve, reject) => {
             const req = https.get("https://mcp.termyte.xyz/v1/health", {
-                headers: { "x-termyte-device-id": termyteConfig.device_id },
+                headers: runtimeHeaders(termyteConfig),
                 timeout: 5000
             }, (res) => {
                 if (res.statusCode === 200) resolve(true);
@@ -246,6 +366,8 @@ For TOML-based configs (e.g. Codex):
     // 6. Print Success
     console.log(`\n${pc.green(pc.bold("Termyte active for " + selectedAgent.name))}\n`);
     console.log(`  Device: ${pc.cyan(termyteConfig.device_id)}`);
+    console.log(`  Org:    ${pc.cyan(termyteConfig.org_id)}`);
+    console.log(`  Plan:   ${pc.cyan(termyteConfig.plan || "free")}`);
     console.log(`  API:    https://mcp.termyte.xyz ${pc.green("v")}\n`);
     console.log(`  ${pc.bold(selectedAgent.restart)}\n`);
     console.log(`  Protocol: ${pc.yellow("manual verification required")}`);
@@ -270,7 +392,7 @@ function showLogs() {
 
     const url = new URL(`${apiUrl}/v1/governance/logs`);
     const req = https.get(url, {
-        headers: { "x-termyte-device-id": deviceId }
+        headers: runtimeHeaders(config)
     }, (res) => {
         if (res.statusCode !== 200) {
             console.error(pc.red(`Server returned status ${res.statusCode}`));
@@ -353,10 +475,12 @@ function checkStatus() {
     const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
     console.log(`\n${pc.bold("Termyte Status")}`);
     console.log(`  Device ID: ${pc.cyan(config.device_id)}`);
+    if (config.org_id) console.log(`  Org ID:    ${pc.cyan(config.org_id)}`);
+    if (config.plan) console.log(`  Plan:      ${pc.cyan(config.plan)}`);
     console.log(`  Agent:     ${pc.cyan(config.agent || "Unknown")}`);
 
     https.get("https://mcp.termyte.xyz/v1/health", {
-        headers: { "x-termyte-device-id": config.device_id },
+        headers: runtimeHeaders(config),
         timeout: 3000
     }, (res) => {
         if (res.statusCode === 200) {
