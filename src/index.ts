@@ -503,6 +503,11 @@ function showLogs() {
                         if (action) {
                             console.log(`  Action: ${truncate(action)}`);
                         }
+                        if (l.decision_basis || l.mechanism_id) {
+                            const basis = l.decision_basis || "unknown_basis";
+                            const mechanism = l.mechanism_id ? ` mechanism=${l.mechanism_id}` : "";
+                            console.log(pc.gray(`  Decision: ${basis}${mechanism}`));
+                        }
                         if (l.reason && l.verdict !== "ALLOW") {
                             console.log(pc.gray(`  Reason: ${truncate(l.reason, 220)}`));
                         }
@@ -665,16 +670,24 @@ async function startMcpServer() {
 
             // 2. If blocked, return structured alternative
             if (verdict.verdict === "BLOCK") {
+                const mechanismText = verdict.mechanism_id
+                    ? `\nMechanism: ${verdict.mechanism_id} (${verdict.decision_basis || verdict.source})`
+                    : verdict.causal_evidence?.mechanism_summary
+                        ? `\nMechanism: ${verdict.causal_evidence.mechanism_summary}`
+                        : "";
                 return {
                     content: [{
                         type: "text",
                         text: `Action blocked by Termyte.\n` +
                             `Reason: ${verdict.reason}\n` +
-                            `Alternative: ${verdict.alternative || "No alternative provided."}`
+                            `Alternative: ${verdict.alternative || "No alternative provided."}${mechanismText}`
                     }],
                     isError: true
                 };
             }
+            const causalText = verdict.causal_evidence?.mechanism_summary
+                ? `Causal mechanism: ${verdict.causal_evidence.mechanism_summary}\n`
+                : "";
             const warningText = verdict.verdict === "WARN"
                 ? `Termyte warning: ${verdict.warning || verdict.reason}\nAlternative: ${verdict.alternative || "Review prior failure before proceeding."}\n\n`
                 : "";
@@ -718,7 +731,7 @@ async function startMcpServer() {
 
             const combinedOutput = (result.stdout + "\n" + result.stderr).trim();
             return {
-                content: [{ type: "text", text: warningText + (combinedOutput || "Command completed with no output.") }],
+                content: [{ type: "text", text: warningText + causalText + (combinedOutput || "Command completed with no output.") }],
                 isError: result.exit_code !== 0
             };
         }

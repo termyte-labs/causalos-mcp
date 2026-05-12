@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as https from 'https';
 import * as http from 'http';
 import { Sanitizer } from './sanitizer.js';
+import { collectPreconditions } from './preconditions.js';
 
 export class CloudKernelClient {
     private deviceId: string | null = null;
@@ -86,7 +87,8 @@ export class CloudKernelClient {
                     try {
                         const parsed = JSON.parse(data);
                         if (res.statusCode && res.statusCode >= 400) {
-                            reject(new Error(parsed.message || `Server error: ${res.statusCode}`));
+                            const reason = parsed.reason || parsed.error || parsed.message || `Server error: ${res.statusCode}`;
+                            reject(new Error(reason));
                         } else {
                             resolve(parsed);
                         }
@@ -112,10 +114,17 @@ export class CloudKernelClient {
     }
 
     async prepareToolCall(session_id: string, tool_name: string, payload: any) {
+        const preconditions = await collectPreconditions({ payload });
+        const payloadObject = payload && typeof payload === "object" && !Array.isArray(payload)
+            ? payload
+            : { value: payload };
         return this.request('POST', '/v1/governance/prepare', {
             session_id,
             tool_name,
-            payload_json: Sanitizer.redact(payload),
+            payload_json: Sanitizer.redact({
+                ...payloadObject,
+                termyte_preconditions: preconditions,
+            }),
         });
     }
 
@@ -137,9 +146,17 @@ export class CloudKernelClient {
         cwd?: string;
         project_name?: string;
     }) {
+        const preconditions = await collectPreconditions({ payload: input.payload, cwd: input.cwd });
+        const payloadObject = input.payload && typeof input.payload === "object" && !Array.isArray(input.payload)
+            ? input.payload
+            : { value: input.payload };
         return this.request('POST', '/v1/governance/guard', {
             ...input,
-            payload: Sanitizer.redact(input.payload),
+            payload: Sanitizer.redact({
+                ...payloadObject,
+                termyte_preconditions: preconditions,
+            }),
+            preconditions_json: Sanitizer.redact(preconditions),
         });
     }
 
