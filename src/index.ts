@@ -65,6 +65,65 @@ function openBrowser(url: string) {
     } catch {}
 }
 
+function tomlString(value: string | undefined): string {
+    return JSON.stringify(value || "");
+}
+
+function truncate(value: string, max = 180): string {
+    const compact = value.replace(/\s+/g, " ").trim();
+    return compact.length > max ? `${compact.slice(0, max - 1)}…` : compact;
+}
+
+function parseMaybeJson(value: any): any {
+    if (typeof value !== "string") return value;
+    try {
+        return JSON.parse(value);
+    } catch {
+        return value;
+    }
+}
+
+function summarizeLogAction(log: any): string {
+    const commandArgs = parseMaybeJson(log.command_args);
+    const payload = parseMaybeJson(log.payload_json);
+
+    if (Array.isArray(commandArgs)) {
+        return commandArgs.map((part) => String(part)).join(" ");
+    }
+    if (typeof commandArgs === "string" && commandArgs.trim()) {
+        return commandArgs;
+    }
+    if (commandArgs && typeof commandArgs === "object") {
+        if (commandArgs.command) {
+            const args = Array.isArray(commandArgs.args) ? ` ${commandArgs.args.join(" ")}` : "";
+            return `${commandArgs.command}${args}`;
+        }
+        return JSON.stringify(commandArgs);
+    }
+
+    if (payload && typeof payload === "object") {
+        if (payload.command) {
+            const args = Array.isArray(payload.args) ? ` ${payload.args.join(" ")}` : "";
+            return `${payload.command}${args}`;
+        }
+        if (payload.intent) return String(payload.intent);
+        if (payload.task) return String(payload.task);
+        if (payload.summary) return String(payload.summary);
+        if (payload.cwd || payload.project_name || payload.agent) {
+            return [
+                payload.project_name ? `project=${payload.project_name}` : "",
+                payload.cwd ? `cwd=${payload.cwd}` : "",
+                payload.agent ? `agent=${payload.agent}` : "",
+            ].filter(Boolean).join(" ");
+        }
+        return JSON.stringify(payload);
+    }
+    if (typeof payload === "string" && payload.trim()) {
+        return payload;
+    }
+    return "";
+}
+
 async function apiRequest(method: string, endpoint: string, body?: any, token?: string): Promise<any> {
     const apiUrl = process.env.TERMYTE_API_URL || "https://mcp.termyte.xyz";
     const url = new URL(endpoint, apiUrl);
@@ -315,16 +374,32 @@ For TOML-based configs (e.g. Codex):
         if (fs.existsSync(targetPath)) {
             content = fs.readFileSync(targetPath, "utf-8");
         }
+        const termyteToml = `[mcp_servers.termyte]
+command = "npx"
+args = ["-y", "termyte"]
+enabled = true
+
+[mcp_servers.termyte.env]
+TERMYTE_DEVICE_ID = ${tomlString(termyteConfig.device_id)}
+TERMYTE_AUTH_TOKEN = ${tomlString(termyteConfig.auth_token)}
+TERMYTE_ORG_ID = ${tomlString(termyteConfig.org_id)}
+TERMYTE_AGENT = ${tomlString(selectedAgent.key)}
+TERMYTE_API_URL = "https://mcp.termyte.xyz"
+`;
 
         if (content.includes("[mcp_servers.termyte]")) {
             console.log(`\n${pc.yellow(`Termyte already configured in ${path.basename(targetPath)}.`)}`);
+            const blockPattern = /\n?\[mcp_servers\.termyte\][\s\S]*?(?=\n\[[^\]]+\]|\s*$)/m;
+            const newContent = content.replace(blockPattern, `\n${termyteToml.trimEnd()}\n`);
+            fs.writeFileSync(targetPath, newContent);
+            console.log(pc.green("Termyte MCP env refreshed."));
         } else {
             let newContent = content;
             if (!content.includes("rmcp_client = true")) {
                 newContent = "# Required for MCP support\nrmcp_client = true\n\n" + newContent;
             }
 
-            newContent += `\n[mcp_servers.termyte]\ncommand = "npx"\nargs = ["-y", "termyte"]\n\n[mcp_servers.termyte.env]\nTERMYTE_DEVICE_ID = "${termyteConfig.device_id}"\nTERMYTE_AUTH_TOKEN = "${termyteConfig.auth_token}"\nTERMYTE_ORG_ID = "${termyteConfig.org_id}"\nTERMYTE_AGENT = "${selectedAgent.key}"\nTERMYTE_API_URL = "https://mcp.termyte.xyz"\n`;
+            newContent += `\n${termyteToml}`;
             fs.writeFileSync(targetPath, newContent);
         }
         const protocolPath = path.join(targetDir, "TERMYTE_PROTOCOL.md");
@@ -424,32 +499,18 @@ function showLogs() {
                         
                         console.log(header);
 
-                        if (l.verdict === "BLOCK" || (l.success === false && l.exit_code !== 0)) {
-                            let commandToDisplay = "";
-                            if (l.command_args) {
-                                const argsStr = typeof l.command_args === 'string' ? l.command_args : JSON.stringify(l.command_args);
-                                commandToDisplay = argsStr;
-                            } else if (l.payload_json) {
-                                // Fallback to payload_json if command_args is null (blocked actions)
-                                const payload = typeof l.payload_json === 'string' ? JSON.parse(l.payload_json) : l.payload_json;
-                                if (payload.command) {
-                                    commandToDisplay = `${payload.command} ${payload.args ? JSON.stringify(payload.args) : ""}`;
-                                } else {
-                                    commandToDisplay = JSON.stringify(payload);
-                                }
-                            }
-
-                            if (commandToDisplay) {
-                                console.log(`  Command: ${commandToDisplay}`);
-                            }
-                            if (l.reason) {
-                                console.log(`  Reason: ${l.reason}`);
-                            }
-                            if (l.stderr_summary) {
-                                console.log(pc.red(pc.dim(`  Stderr: ${l.stderr_summary}`)));
-                            }
-                        } else if (l.reason && l.verdict !== "ALLOW") {
-                            console.log(pc.gray(`  Note: ${l.reason}`));
+                        const action = summarizeLogAction(l);
+                        if (action) {
+                            console.log(`  Action: ${truncate(action)}`);
+                        }
+                        if (l.reason && l.verdict !== "ALLOW") {
+                            console.log(pc.gray(`  Reason: ${truncate(l.reason, 220)}`));
+                        }
+                        if (l.stdout_summary) {
+                            console.log(pc.dim(`  Stdout: ${truncate(l.stdout_summary, 220)}`));
+                        }
+                        if (l.stderr_summary) {
+                            console.log(pc.red(pc.dim(`  Stderr: ${truncate(l.stderr_summary, 220)}`)));
                         }
                     });
                 }
