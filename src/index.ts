@@ -16,11 +16,11 @@ import { v4 as uuidv4 } from "uuid";
 const CONFIG_DIR = path.join(os.homedir(), ".termyte");
 const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 const TERMYTE_PROTOCOL = `Termyte protocol:
-- Before starting a coding task, call the termyte context_build tool with the task, cwd, project_name, and agent when available.
-- Before risky non-shell actions such as file deletion, file overwrite, git mutation, database mutation, network execution, package publishing, or secret access, call termyte guard_action.
-- Use termyte execute for shell commands when available.
+- Before starting a coding task, call context_build with the task and workspace context.
+- Before risky non-shell actions, call guard_action.
+- Use execute for shell commands when available.
 - If Termyte returns WARN, proceed only with the warning instructions in context.
-- If Termyte returns BLOCK, do not perform the action; explain the reason and safer alternative.`;
+- If Termyte returns BLOCK, do not perform the action.`;
 
 // ─── CLI Command Dispatcher ───────────────────────────────────────────────────
 const arg = process.argv[2];
@@ -32,8 +32,11 @@ if (arg === "init") {
     });
 } else if (arg === "log" || arg === "logs") {
     showLogs();
-} else if (arg === "status") {
-    checkStatus();
+} else if (arg === "policy") {
+    runPolicyCommand(process.argv.slice(3)).catch(err => {
+        console.error(pc.red(`Policy command failed: ${err.message}`));
+        process.exit(1);
+    });
 } else if (arg === "--version" || arg === "-v") {
     console.log("Termyte v0.2.0");
     process.exit(0);
@@ -255,50 +258,11 @@ async function init() {
     let selectedAgent: any = null;
 
     if (detected.length > 1) {
-        console.log("Multiple coding agents detected:");
-        detected.forEach((a, i) => console.log(`  ${i + 1}. ${a.name}`));
-        const choice = parseInt(syncPrompt(`Select agent (1-${detected.length}): `));
-        selectedAgent = detected[choice - 1];
+        selectedAgent = detected[0];
     } else if (detected.length === 1) {
         selectedAgent = detected[0];
-        console.log(`Detected ${pc.bold(selectedAgent.name)}`);
     } else {
-        console.log("No coding agent detected. Which agent are you using?");
-        agents.forEach((a, i) => console.log(`  ${i + 1}. ${a.name}`));
-        console.log(`  ${agents.length + 1}. Other (manual setup)`);
-        const choice = parseInt(syncPrompt(`Select agent (1-${agents.length + 1}): `));
-        if (choice > agents.length) {
-            console.log(`\n${pc.yellow("Manual setup required.")}`);
-            console.log("\nAdd this to your MCP config under mcpServers:");
-            console.log(`
-    "termyte": {
-    "command": "npx",
-    "args": ["-y", "termyte"],
-    "env": {
-      "TERMYTE_DEVICE_ID": "<device_id>",
-      "TERMYTE_AUTH_TOKEN": "<auth_token>",
-      "TERMYTE_ORG_ID": "<org_id>",
-      "TERMYTE_AGENT": "<agent>",
-      "TERMYTE_API_URL": "https://mcp.termyte.xyz"
-    }
-  }
-
-For TOML-based configs (e.g. Codex):
-
-  [mcp_servers.termyte]
-  command = "npx"
-  args = ["-y", "termyte"]
-
-  [mcp_servers.termyte.env]
-  TERMYTE_DEVICE_ID = "<device_id>"
-  TERMYTE_AUTH_TOKEN = "<auth_token>"
-  TERMYTE_ORG_ID = "<org_id>"
-  TERMYTE_AGENT = "<agent>"
-  TERMYTE_API_URL = "https://mcp.termyte.xyz"
-`);
-            process.exit(0);
-        }
-        selectedAgent = agents[choice - 1];
+        selectedAgent = agents[0];
     }
 
     if (!selectedAgent) {
@@ -368,7 +332,7 @@ For TOML-based configs (e.g. Codex):
         const protocolPath = path.join(targetDir, "TERMYTE_PROTOCOL.md");
         fs.writeFileSync(protocolPath, TERMYTE_PROTOCOL);
         termyteConfig.protocol_verified = false;
-        termyteConfig.protocol_note = `${selectedAgent.name} MCP config was installed. Protocol instructions were written to ${protocolPath}; verify your agent reads this file or add it to custom instructions.`;
+        termyteConfig.protocol_note = `${selectedAgent.name} MCP config was installed. Protocol instructions were written to ${protocolPath}.`;
     } else if (selectedAgent.type === "toml") {
         let content = "";
         if (fs.existsSync(targetPath)) {
@@ -405,7 +369,7 @@ TERMYTE_API_URL = "https://mcp.termyte.xyz"
         const protocolPath = path.join(targetDir, "TERMYTE_PROTOCOL.md");
         fs.writeFileSync(protocolPath, TERMYTE_PROTOCOL);
         termyteConfig.protocol_verified = false;
-        termyteConfig.protocol_note = `${selectedAgent.name} MCP config was installed. Protocol instructions were written to ${protocolPath}; verify your agent reads this file or add it to project instructions.`;
+        termyteConfig.protocol_note = `${selectedAgent.name} MCP config was installed. Protocol instructions were written to ${protocolPath}.`;
     }
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(termyteConfig, null, 2));
 
@@ -560,6 +524,73 @@ function checkStatus() {
         console.log(`  API:       ${pc.red("Offline")}`);
         process.exit(1);
     });
+}
+
+async function runPolicyCommand(args: string[]) {
+    const sub = args[0];
+    const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8")) : null;
+    if (!config) {
+        console.error(pc.red("Termyte not initialized. Run 'npx termyte init' first."));
+        process.exit(1);
+    }
+    const apiUrl = process.env.TERMYTE_API_URL || "https://mcp.termyte.xyz";
+    const base = new URL(apiUrl);
+    const headers = {
+        ...runtimeHeaders(config),
+        "content-type": "application/json",
+    };
+    if (sub === "list") {
+        const res = await fetch(new URL("/v1/policies", base), { headers });
+        const json = await res.json();
+        console.log(JSON.stringify(json, null, 2));
+        return;
+    }
+    if (sub === "add") {
+        const pattern = args[1];
+        const action = (args[2] || "BLOCK").toUpperCase();
+        const name = args.slice(3).join(" ") || pattern;
+        if (!pattern) throw new Error("Usage: npx termyte policy add <pattern> [BLOCK|WARN|ALLOW] [name]");
+        const body = {
+            name,
+            pattern,
+            action,
+            rule_type: "command_pattern",
+            priority: 100,
+            enabled: true,
+        };
+        const res = await fetch(new URL("/v1/policies", base), {
+            method: "POST",
+            headers,
+            body: JSON.stringify(body),
+        });
+        console.log(await res.text());
+        return;
+    }
+    if (sub === "allow-path" || sub === "block-path") {
+        const pattern = args[1];
+        if (!pattern) throw new Error(`Usage: npx termyte policy ${sub} <path-pattern>`);
+        const body = {
+            name: `${sub}:${pattern}`,
+            pattern,
+            action: sub === "allow-path" ? "ALLOW" : "BLOCK",
+            rule_type: "path_pattern",
+            target_paths: [pattern],
+            priority: 50,
+            enabled: true,
+        };
+        const res = await fetch(new URL("/v1/policies", base), {
+            method: "POST",
+            headers,
+            body: JSON.stringify(body),
+        });
+        console.log(await res.text());
+        return;
+    }
+    console.log(`Usage:
+  npx termyte policy list
+  npx termyte policy add <pattern> [BLOCK|WARN|ALLOW] [name]
+  npx termyte policy allow-path <path-pattern>
+  npx termyte policy block-path <path-pattern>`);
 }
 
 function showHelp() {
