@@ -33,7 +33,10 @@ if (arg === "init") {
 } else if (arg === "log" || arg === "logs") {
     showLogs();
 } else if (arg === "status") {
-    checkStatus();
+    checkStatus().catch(err => {
+        console.error(pc.red(`Status check failed: ${err.message}`));
+        process.exit(1);
+    });
 } else if (arg === "policy") {
     runPolicyCommand(process.argv.slice(3)).catch(err => {
         console.error(pc.red(`Policy command failed: ${err.message}`));
@@ -499,7 +502,7 @@ function showLogs() {
     });
 }
 
-function checkStatus() {
+async function checkStatus() {
     if (!fs.existsSync(CONFIG_PATH)) {
         console.log(pc.red("Status: Not Initialized"));
         process.exit(1);
@@ -511,21 +514,21 @@ function checkStatus() {
     if (config.plan) console.log(`  Plan:      ${pc.cyan(config.plan)}`);
     console.log(`  Agent:     ${pc.cyan(config.agent || "Unknown")}`);
 
-    https.get("https://mcp.termyte.xyz/v1/health", {
-        headers: runtimeHeaders(config),
-        timeout: 3000
-    }, (res) => {
-        if (res.statusCode === 200) {
-            console.log(`  API:       ${pc.green("Online")}`);
-            process.exit(0);
-        } else {
-            console.log(`  API:       ${pc.red(`Error (${res.statusCode})`)}`);
-            process.exit(1);
+    try {
+        const status = await kernel.cloudClient.getGovernanceStatus();
+        console.log(`  API:       ${pc.green("Online")}`);
+        console.log(`  Governed:  ${status.governed ? pc.green("Yes") : pc.yellow("No")}`);
+        console.log(`  Coverage:  ${pc.cyan(status.coverage_state || "unknown")}`);
+        console.log(`  Active:    ${pc.cyan(String(status.active_agents ?? 0))}/${pc.cyan(String(status.max_active_agents ?? 1))}`);
+        if (status.latest_session?.session_id) {
+            console.log(`  Session:   ${pc.cyan(status.latest_session.session_id)}`);
         }
-    }).on('error', () => {
+        process.exit(0);
+    } catch (err: any) {
         console.log(`  API:       ${pc.red("Offline")}`);
+        console.log(`  Governed:  ${pc.red("Unavailable")}`);
         process.exit(1);
-    });
+    }
 }
 
 async function runPolicyCommand(args: string[]) {

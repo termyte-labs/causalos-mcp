@@ -23,6 +23,16 @@ describe("Cloud contract", () => {
                     res.end(JSON.stringify({ verdict: "WARN", reason: "prior failure", warning: "be careful", risk_score: 0.6, matched_patterns: [] }));
                 } else if ((req.url || "").startsWith("/v1/governance/commit")) {
                     res.end(JSON.stringify({ status: "success" }));
+                } else if ((req.url || "").startsWith("/v1/governance/status")) {
+                    res.end(JSON.stringify({
+                        device_id: "test-device-id",
+                        org_id: "test-org-id",
+                        plan: "team",
+                        governed: true,
+                        coverage_state: "governed",
+                        active_agents: 1,
+                        max_active_agents: 5,
+                    }));
                 } else {
                     res.end(JSON.stringify({ ok: true }));
                 }
@@ -117,5 +127,20 @@ describe("Cloud contract", () => {
         expect(requests[0]?.method).toBe("POST");
         expect(requests[0]?.body.session_id).toBe("s1");
         expect(JSON.stringify(requests[0]?.body)).toContain("[REDACTED]");
+    });
+
+    it("getGovernanceStatus calls /v1/governance/status with auth headers", async () => {
+        const client = new CloudKernelClient();
+        const status = await client.getGovernanceStatus();
+
+        expect(requests[0]?.url).toBe("/v1/governance/status");
+        expect(requests[0]?.method).toBe("GET");
+        expect(requests[0]?.headers["x-termyte-auth-token"]).toBe("test-auth-token");
+        expect(status).toMatchObject({
+            governed: true,
+            coverage_state: "governed",
+            active_agents: 1,
+            max_active_agents: 5,
+        });
     });
 });

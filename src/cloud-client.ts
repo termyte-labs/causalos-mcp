@@ -188,6 +188,10 @@ export class CloudKernelClient {
         return this.request('GET', '/metrics');
     }
 
+    async getGovernanceStatus() {
+        return this.request('GET', '/v1/governance/status');
+    }
+
     async getTimeline(session_id?: string) {
         const suffix = session_id ? `?session_id=${encodeURIComponent(session_id)}` : '';
         return this.request('GET', `/v1/governance/timeline${suffix}`);
