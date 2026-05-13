@@ -1,6 +1,6 @@
 {
   "name": "termyte",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Termyte eats dangerous agent actions before they eat your codebase",
   "main": "dist/index.js",
   "bin": {
@@ -15,6 +15,7 @@
     "benchmark:governance": "node scripts/eval_governance.mjs",
     "benchmark:car": "node scripts/car_benchmark.mjs",
     "benchmark:causal": "node scripts/causal_benchmark.mjs",
+    "benchmark:startup": "node scripts/startup_sellability_benchmark.mjs",
     "prepublishOnly": "npm run build"
   },
   "files": [

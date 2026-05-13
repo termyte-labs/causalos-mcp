@@ -32,6 +32,8 @@ if (arg === "init") {
     });
 } else if (arg === "log" || arg === "logs") {
     showLogs();
+} else if (arg === "status") {
+    checkStatus();
 } else if (arg === "policy") {
     runPolicyCommand(process.argv.slice(3)).catch(err => {
         console.error(pc.red(`Policy command failed: ${err.message}`));
