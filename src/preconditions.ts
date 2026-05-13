@@ -97,6 +97,98 @@ async function collectGit(command: string, args: string[], cwd?: string) {
   };
 }
 
+function detectPackageManager(command: string, args: string[]) {
+  const head = [...parseCommandWords(command), ...args.map((token) => token.toLowerCase())];
+  const managers = ["npm", "pnpm", "yarn", "cargo", "pip", "twine", "docker", "gh", "gem"];
+  return managers.find((manager) => head.includes(manager)) || "";
+}
+
+function extractRegistry(args: string[]): string {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i].toLowerCase();
+    if (arg === "--registry" || arg === "--publish-registry" || arg === "--registry-url") {
+      return args[i + 1] || "";
+    }
+    if (arg.startsWith("--registry=")) {
+      return args[i].slice("--registry=".length);
+    }
+    if (arg.startsWith("--publish-registry=")) {
+      return args[i].slice("--publish-registry=".length);
+    }
+  }
+  return "";
+}
+
+async function readPackageMetadata(cwd?: string) {
+  if (!cwd) return {};
+  const packageJsonPath = path.join(cwd, "package.json");
+  try {
+    const packageJson = JSON.parse(await fs.readFile(packageJsonPath, "utf-8"));
+    return {
+      manifest_path: packageJsonPath,
+      package_name: packageJson.name || "",
+      package_version: packageJson.version || "",
+    };
+  } catch {}
+
+  const cargoTomlPath = path.join(cwd, "Cargo.toml");
+  try {
+    const cargoToml = await fs.readFile(cargoTomlPath, "utf-8");
+    const packageName = cargoToml.match(/^\s*name\s*=\s*["']([^"']+)["']/m)?.[1] || "";
+    const packageVersion = cargoToml.match(/^\s*version\s*=\s*["']([^"']+)["']/m)?.[1] || "";
+    return {
+      manifest_path: cargoTomlPath,
+      package_name: packageName,
+      package_version: packageVersion,
+    };
+  } catch {}
+
+  return {};
+}
+
+async function collectPackage(command: string, args: string[], cwd?: string) {
+  const words = [...parseCommandWords(command), ...args.map((arg) => arg.toLowerCase())];
+  const manager = detectPackageManager(command, args);
+  const publishLike =
+    words.includes("publish") ||
+    words.includes("release") ||
+    words.includes("upload") ||
+    (manager === "docker" && words.includes("push")) ||
+    (manager === "gh" && words.includes("release"));
+
+  if (!publishLike) return undefined;
+
+  const dryRun = words.includes("--dry-run") || words.includes("--dryrun") || words.includes("--simulate");
+  const throughScript = ["npm", "pnpm", "yarn"].includes(manager) && words.includes("run");
+  const scriptName = throughScript ? args[args.findIndex((arg) => arg.toLowerCase() === "run") + 1] || "" : "";
+  const metadata = await readPackageMetadata(cwd);
+  const registry =
+    extractRegistry(args) ||
+    process.env.NPM_CONFIG_REGISTRY ||
+    process.env.PUBLISH_REGISTRY ||
+    process.env.CARGO_REGISTRIES_CRATES_IO_INDEX ||
+    process.env.PIP_INDEX_URL ||
+    "";
+
+  return {
+    manager: manager || "unknown",
+    action: words.includes("publish") || (manager === "docker" && words.includes("push")) ? "publish" : "release",
+    dry_run: dryRun,
+    registry,
+    through_script: throughScript,
+    script_name: scriptName,
+    target_kind:
+      manager === "docker"
+        ? "container_image"
+        : manager === "cargo"
+          ? "cargo_crate"
+          : manager === "gh"
+            ? "release_asset"
+            : "package",
+    ...metadata,
+  };
+}
+
 function collectDatabase(command: string, args: string[]) {
   const sql = `${command} ${args.join(" ")}`.toLowerCase();
   const destructive = /\b(delete from|update|drop table|drop database|truncate)\b/.test(sql);
@@ -124,12 +216,14 @@ export async function collectPreconditions(input: {
     collectFilesystem(command, args, cwd),
     collectGit(command, args, cwd),
   ]);
+  const packageInfo = await collectPackage(command, args, cwd);
   const database = collectDatabase(command, args);
   return {
     collected_at: new Date().toISOString(),
     cwd_hash: cwd ? hashForTelemetry(path.resolve(cwd)) : null,
     filesystem,
     git,
+    package: packageInfo,
     database,
   };
 }
