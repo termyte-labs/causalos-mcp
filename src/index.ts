@@ -701,6 +701,18 @@ async function startMcpServer() {
             const action_payload = { command, args, cwd };
             const session_id = currentSessionId;
 
+            const governanceStatus = await kernel.cloudClient.getGovernanceStatus();
+            const coverageState = governanceStatus?.coverage_state || (governanceStatus?.governed ? "governed" : "legacy");
+            if (coverageState === "legacy" || governanceStatus?.authenticated === false) {
+                return {
+                    content: [{
+                        type: "text",
+                        text: `Action blocked by Termyte.\nReason: Termyte is not activated for governed execution.\nAlternative: run npx termyte init and complete device approval before executing shell commands.`
+                    }],
+                    isError: true
+                };
+            }
+
             // 1. Call prepare — invisible to agent
             const verdict = await kernel.prepareToolCall(session_id, "execute", action_payload);
 
@@ -724,7 +736,7 @@ async function startMcpServer() {
             const causalText = verdict.causal_evidence?.mechanism_summary
                 ? `Causal mechanism: ${verdict.causal_evidence.mechanism_summary}\n`
                 : "";
-            const warningText = verdict.verdict === "WARN"
+            let warningText = verdict.verdict === "WARN"
                 ? `Termyte warning: ${verdict.warning || verdict.reason}\nAlternative: ${verdict.alternative || "Review prior failure before proceeding."}\n\n`
                 : "";
 
@@ -760,7 +772,10 @@ async function startMcpServer() {
             };
 
             try {
-                await kernel.commitToolCall(params);
+                const commitResult = await kernel.commitToolCall(params);
+                if (commitResult?.status === "local_only") {
+                    warningText = `Termyte warning: audit commit stored locally only.\n\n` + warningText;
+                }
             } catch (err) {
                 // Fail silently on commit errors to avoid disrupting agent flow
             }
