@@ -12,6 +12,7 @@ import * as https from "https";
 import * as http from "http";
 import { execFile } from "child_process";
 import { v4 as uuidv4 } from "uuid";
+import { getSupportedAgents, inspectIntegration, verifySupportedIntegrations } from "./integrations.js";
 
 const CONFIG_DIR = path.join(os.homedir(), ".termyte");
 const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
@@ -40,6 +41,11 @@ if (arg === "init") {
 } else if (arg === "replay") {
     showReplay(process.argv.slice(3)).catch(err => {
         console.error(pc.red(`Replay command failed: ${err.message}`));
+        process.exit(1);
+    });
+} else if (arg === "verify") {
+    showIntegrations().catch(err => {
+        console.error(pc.red(`Verification failed: ${err.message}`));
         process.exit(1);
     });
 } else if (arg === "policy") {
@@ -233,36 +239,7 @@ async function init() {
     console.log(`\n${pc.bold(pc.cyan("Initializing Termyte Governance..."))}\n`);
 
     const home = os.homedir();
-    const agents = [
-        {
-            name: "Claude Code",
-            key: "claude",
-            paths: [path.join(home, ".claude", "settings.json")],
-            type: "json",
-            restart: "Restart Claude Code (close and reopen the app)"
-        },
-        {
-            name: "Cursor",
-            key: "cursor",
-            paths: [path.join(home, ".cursor", "mcp.json"), path.join(home, ".cursor", "config", "mcp.json")],
-            type: "json",
-            restart: "Restart Cursor to activate MCP server"
-        },
-        {
-            name: "Antigravity",
-            key: "antigravity",
-            paths: [path.join(home, ".gemini", "antigravity", "mcp_config.json")],
-            type: "json",
-            restart: "In Antigravity, open ... > Manage MCP Servers and click the refresh button"
-        },
-        {
-            name: "Codex",
-            key: "codex",
-            paths: [path.join(home, ".codex", "config.toml")],
-            type: "toml",
-            restart: "Restart Codex and run /mcp to confirm termyte tools are loaded"
-        },
-    ];
+    const agents = getSupportedAgents(home);
 
     const detected = agents.filter(a => a.paths.some(p => fs.existsSync(p)));
     let selectedAgent: any = null;
@@ -384,10 +361,13 @@ TERMYTE_API_URL = "https://mcp.termyte.xyz"
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(termyteConfig, null, 2));
 
     // 4. Verification Step
-    const finalContent = fs.readFileSync(targetPath, "utf-8");
-    const verified = selectedAgent.type === "json"
-        ? finalContent.includes('"termyte"')
-        : finalContent.includes("[mcp_servers.termyte]");
+    const verified = inspectIntegration(selectedAgent).verified;
+    if (verified) {
+        termyteConfig.protocol_verified = true;
+        termyteConfig.protocol_verified_at = new Date().toISOString();
+        termyteConfig.protocol_note = `${selectedAgent.name} MCP config verified at ${targetPath}.`;
+        fs.writeFileSync(CONFIG_PATH, JSON.stringify(termyteConfig, null, 2));
+    }
 
     console.log(pc.green(`MCP entry verified in ${pc.bold(targetPath)}`));
 
@@ -419,7 +399,7 @@ TERMYTE_API_URL = "https://mcp.termyte.xyz"
     console.log(`  Plan:   ${pc.cyan(termyteConfig.plan || "free")}`);
     console.log(`  API:    https://mcp.termyte.xyz ${pc.green("v")}\n`);
     console.log(`  ${pc.bold(selectedAgent.restart)}\n`);
-    console.log(`  Protocol: ${pc.yellow("manual verification required")}`);
+    console.log(`  Protocol: ${termyteConfig.protocol_verified ? pc.green("verified") : pc.yellow("installed")}`);
     console.log(`  ${termyteConfig.protocol_note}\n`);
     console.log(`  ${pc.bold("npx termyte log")}      -> see what your agent did`);
     console.log(`  ${pc.bold("npx termyte status")}   -> check connection\n`);
@@ -534,6 +514,45 @@ async function checkStatus() {
         console.log(`  Governed:  ${pc.red("Unavailable")}`);
         process.exit(1);
     }
+}
+
+async function showIntegrations() {
+    const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8")) : null;
+    if (!config) {
+        console.error(pc.red("Termyte not initialized. Run 'npx termyte init' first."));
+        process.exit(1);
+    }
+
+    let apiStatus: any = null;
+    try {
+        apiStatus = await kernel.cloudClient.getGovernanceStatus();
+    } catch {}
+
+    const checks = verifySupportedIntegrations(os.homedir());
+    const governed = apiStatus?.coverage_state || (apiStatus?.governed ? "governed" : "legacy");
+
+    console.log(`\n${pc.bold("Termyte Integrations")}`);
+    console.log(`  Coverage: ${pc.cyan(governed)}`);
+    console.log(`  Agent:    ${pc.cyan(config.agent || "Unknown")}`);
+    console.log(`  API:      ${apiStatus ? pc.green("Online") : pc.yellow("Offline")}`);
+    checks.forEach((check) => {
+        const state = check.verified ? pc.green("verified") : (check.configured ? pc.yellow("partial") : pc.red("missing"));
+        console.log(`  ${check.name}: ${state}`);
+        console.log(`    ${check.reason}`);
+        if (check.path) {
+            console.log(`    Path: ${pc.gray(check.path)}`);
+        }
+    });
+
+    const selected = checks.find((check) => check.key === config.agent);
+    if (selected?.verified) {
+        config.protocol_verified = true;
+        config.protocol_verified_at = new Date().toISOString();
+        config.protocol_note = `${selected.name} MCP config verified at ${selected.path}.`;
+        fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+    }
+
+    process.exit(selected?.verified && apiStatus ? 0 : 1);
 }
 
 async function showReplay(args: string[]) {
@@ -659,6 +678,7 @@ Usage:
   npx termyte init        Setup local device-id and auto-configure agent
   npx termyte log         Show recent governance events
   npx termyte replay <session-id> [limit]  Show replayable session history
+  npx termyte verify      Verify Claude, Codex, and Cursor integrations
   npx termyte status      Check connection to the sidecar
   npx termyte             Start MCP Server (Standard IO)
 
