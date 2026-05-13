@@ -30,6 +30,23 @@ describe("precondition collectors", () => {
     });
   });
 
+  it("captures destructive sql update evidence", async () => {
+    const facts = await collectPreconditions({
+      payload: {
+        command: "psql",
+        args: ["-c", "update users set role = 'admin'"],
+      },
+    });
+
+    expect(facts.database).toMatchObject({
+      verb: "update",
+      statement_kind: "update",
+      table: "users",
+      has_where: false,
+      transaction_present: false,
+    });
+  });
+
   it("captures package publish evidence", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "termyte-preconditions-"));
     try {

@@ -212,12 +212,22 @@ function collectDatabase(command: string, args: string[]) {
   const destructive = /\b(delete from|update|drop table|drop database|truncate)\b/.test(sql);
   if (!destructive) return undefined;
   const table = sql.match(/\b(?:from|table|update)\s+([a-zA-Z0-9_."-]+)/)?.[1] || "unknown";
+  const statement_kind = sql.includes("delete from")
+    ? "delete"
+    : sql.includes("update")
+      ? "update"
+      : sql.includes("truncate")
+        ? "truncate"
+        : "drop";
   return {
-    verb: sql.includes("delete from") ? "delete" : sql.includes("update") ? "update" : sql.includes("truncate") ? "truncate" : "drop",
+    verb: statement_kind,
+    statement_kind,
     table,
     has_where: /\bwhere\b/.test(sql),
+    has_limit: /\blimit\b/.test(sql),
     transaction_present: /\bbegin\b|\btransaction\b|\brollback\b/.test(sql),
     environment: process.env.TERMYTE_ENV || process.env.NODE_ENV || "unknown",
+    client: command || "unknown",
   };
 }
 
