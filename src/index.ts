@@ -53,6 +53,11 @@ if (arg === "init") {
         console.error(pc.red(`Admin command failed: ${err.message}`));
         process.exit(1);
     });
+} else if (arg === "metrics") {
+    showMetrics().catch(err => {
+        console.error(pc.red(`Metrics command failed: ${err.message}`));
+        process.exit(1);
+    });
 } else if (arg === "policy") {
     runPolicyCommand(process.argv.slice(3)).catch(err => {
         console.error(pc.red(`Policy command failed: ${err.message}`));
@@ -608,6 +613,27 @@ async function showAdminOverview() {
     process.exit(0);
 }
 
+async function showMetrics() {
+    const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8")) : null;
+    if (!config) {
+        console.error(pc.red("Termyte not initialized. Run 'npx termyte init' first."));
+        process.exit(1);
+    }
+
+    const metrics = await kernel.cloudClient.getMetrics();
+    console.log(`\n${pc.bold("Termyte Metrics")}`);
+    console.log(`  Verdicts: allow=${pc.green(String(metrics.verdicts?.allow ?? 0))} block=${pc.red(String(metrics.verdicts?.block ?? 0))} warn=${pc.yellow(String(metrics.verdicts?.warn ?? 0))} uncertain=${pc.cyan(String(metrics.verdicts?.uncertain ?? 0))}`);
+    console.log(`  Prepare:  count=${pc.cyan(String(metrics.performance?.prepare_calls ?? 0))} avg=${pc.cyan(String(metrics.performance?.avg_prepare_ms ?? 0))}ms`);
+    console.log(`  Judge:    count=${pc.cyan(String(metrics.performance?.judge_calls ?? 0))} avg=${pc.cyan(String(metrics.performance?.avg_judge_ms ?? 0))}ms timeout=${pc.yellow(String(metrics.performance?.judge_timeouts ?? 0))}`);
+    const stages = metrics.performance?.stages || {};
+    Object.entries(stages).forEach(([name, stage]: any) => {
+        console.log(`  ${name.padEnd(9)} count=${String(stage?.count ?? 0).padStart(4)} avg=${String(stage?.avg_ms ?? 0).padStart(4)}ms p95=${String(stage?.p95_ms ?? 0).padStart(4)}ms`);
+    });
+    console.log(`  Cache:    hits=${pc.green(String(metrics.cache?.hits ?? 0))} misses=${pc.yellow(String(metrics.cache?.misses ?? 0))}`);
+    console.log(`  Storage:  ledger_inserts=${pc.cyan(String(metrics.storage?.ledger_inserts ?? 0))} ledger_updates=${pc.cyan(String(metrics.storage?.ledger_updates ?? 0))} graph_inserts=${pc.cyan(String(metrics.storage?.graph_inserts ?? 0))} db_errors=${pc.red(String(metrics.storage?.db_errors ?? 0))}`);
+    process.exit(0);
+}
+
 async function showReplay(args: string[]) {
     const sessionId = args[0];
     const limitArg = args[1];
@@ -733,6 +759,7 @@ Usage:
   npx termyte replay <session-id> [limit]  Show replayable session history
   npx termyte verify      Verify Claude, Codex, and Cursor integrations
   npx termyte admin       Show org users, devices, sessions, policies, and audits
+  npx termyte metrics     Show runtime verdict, cache, and latency metrics
   npx termyte status      Check connection to the sidecar
   npx termyte             Start MCP Server (Standard IO)
 

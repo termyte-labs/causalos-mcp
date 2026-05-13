@@ -147,5 +147,5 @@ export function inspectIntegration(agent: SupportedAgent): IntegrationCheck {
 }
 
 export function verifySupportedIntegrations(home = os.homedir()): IntegrationCheck[] {
-    return getSupportedAgents(home).map((agent) => inspectIntegration(agent, home));
+    return getSupportedAgents(home).map((agent) => inspectIntegration(agent));
 }

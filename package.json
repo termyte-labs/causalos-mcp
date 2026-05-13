@@ -16,6 +16,7 @@
     "benchmark:car": "node scripts/car_benchmark.mjs",
     "benchmark:causal": "node scripts/causal_benchmark.mjs",
     "benchmark:startup": "node scripts/startup_sellability_benchmark.mjs",
+    "benchmark:adversarial": "node scripts/adversarial_harness.mjs",
     "prepublishOnly": "npm run build"
   },
   "files": [

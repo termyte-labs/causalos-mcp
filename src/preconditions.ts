@@ -123,15 +123,15 @@ function detectPackageManager(command: string, args: string[]) {
 
 function extractRegistry(args: string[]): string {
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i].toLowerCase();
+    const arg = (args[i] || "").toLowerCase();
     if (arg === "--registry" || arg === "--publish-registry" || arg === "--registry-url") {
       return args[i + 1] || "";
     }
     if (arg.startsWith("--registry=")) {
-      return args[i].slice("--registry=".length);
+      return (args[i] || "").slice("--registry=".length);
     }
     if (arg.startsWith("--publish-registry=")) {
-      return args[i].slice("--publish-registry=".length);
+      return (args[i] || "").slice("--publish-registry=".length);
     }
   }
   return "";
@@ -178,7 +178,8 @@ async function collectPackage(command: string, args: string[], cwd?: string) {
 
   const dryRun = words.includes("--dry-run") || words.includes("--dryrun") || words.includes("--simulate");
   const throughScript = ["npm", "pnpm", "yarn"].includes(manager) && words.includes("run");
-  const scriptName = throughScript ? args[args.findIndex((arg) => arg.toLowerCase() === "run") + 1] || "" : "";
+  const runIndex = args.findIndex((arg) => arg.toLowerCase() === "run");
+  const scriptName = throughScript ? (runIndex >= 0 ? args[runIndex + 1] || "" : "") : "";
   const metadata = await readPackageMetadata(cwd);
   const registry =
     extractRegistry(args) ||

@@ -55,6 +55,22 @@ describe("Cloud contract", () => {
                         sessions: [],
                         audits: [],
                     }));
+                } else if ((req.url || "").startsWith("/metrics")) {
+                    res.end(JSON.stringify({
+                        verdicts: { allow: 5, block: 2, warn: 1, uncertain: 0 },
+                        performance: {
+                            prepare_calls: 4,
+                            avg_prepare_ms: 12,
+                            judge_calls: 1,
+                            judge_timeouts: 0,
+                            avg_judge_ms: 7,
+                            stages: {
+                                auth: { count: 1, avg_ms: 2, p95_ms: 2 },
+                            },
+                        },
+                        storage: { ledger_inserts: 3, ledger_updates: 2, graph_inserts: 1, db_errors: 0 },
+                        cache: { hits: 10, misses: 2 },
+                    }));
                 } else {
                     res.end(JSON.stringify({ ok: true }));
                 }
@@ -195,6 +211,19 @@ describe("Cloud contract", () => {
             stored_sessions: 4,
             policy_count: 5,
             audit_count: 6,
+        });
+    });
+
+    it("getMetrics calls /metrics with auth headers", async () => {
+        const client = new CloudKernelClient();
+        const metrics = await client.getMetrics();
+
+        expect(requests[0]?.url).toBe("/metrics");
+        expect(requests[0]?.method).toBe("GET");
+        expect(requests[0]?.headers["x-termyte-auth-token"]).toBe("test-auth-token");
+        expect(metrics).toMatchObject({
+            verdicts: { allow: 5, block: 2, warn: 1, uncertain: 0 },
+            performance: { prepare_calls: 4, avg_prepare_ms: 12, judge_calls: 1, avg_judge_ms: 7 },
         });
     });
 });
