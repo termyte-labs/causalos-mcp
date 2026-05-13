@@ -196,4 +196,12 @@ export class CloudKernelClient {
         const suffix = session_id ? `?session_id=${encodeURIComponent(session_id)}` : '';
         return this.request('GET', `/v1/governance/timeline${suffix}`);
     }
+
+    async getReplay(session_id: string, limit?: number) {
+        const params = new URLSearchParams({ session_id });
+        if (typeof limit === "number") {
+            params.set("limit", String(limit));
+        }
+        return this.request('GET', `/v1/governance/replay?${params.toString()}`);
+    }
 }

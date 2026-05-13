@@ -33,6 +33,14 @@ describe("Cloud contract", () => {
                         active_agents: 1,
                         max_active_agents: 5,
                     }));
+                } else if ((req.url || "").startsWith("/v1/governance/replay")) {
+                    res.end(JSON.stringify({
+                        session_id: "session-42",
+                        replayable: true,
+                        chain_valid: true,
+                        current_state: { last_verdict: "ALLOW" },
+                        events: [],
+                    }));
                 } else {
                     res.end(JSON.stringify({ ok: true }));
                 }
@@ -141,6 +149,20 @@ describe("Cloud contract", () => {
             coverage_state: "governed",
             active_agents: 1,
             max_active_agents: 5,
+        });
+    });
+
+    it("getReplay calls /v1/governance/replay with session query and auth headers", async () => {
+        const client = new CloudKernelClient();
+        const replay = await client.getReplay("session-42", 25);
+
+        expect(requests[0]?.url).toBe("/v1/governance/replay?session_id=session-42&limit=25");
+        expect(requests[0]?.method).toBe("GET");
+        expect(requests[0]?.headers["x-termyte-auth-token"]).toBe("test-auth-token");
+        expect(replay).toMatchObject({
+            session_id: "session-42",
+            replayable: true,
+            chain_valid: true,
         });
     });
 });

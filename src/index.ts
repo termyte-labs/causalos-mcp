@@ -37,6 +37,11 @@ if (arg === "init") {
         console.error(pc.red(`Status check failed: ${err.message}`));
         process.exit(1);
     });
+} else if (arg === "replay") {
+    showReplay(process.argv.slice(3)).catch(err => {
+        console.error(pc.red(`Replay command failed: ${err.message}`));
+        process.exit(1);
+    });
 } else if (arg === "policy") {
     runPolicyCommand(process.argv.slice(3)).catch(err => {
         console.error(pc.red(`Policy command failed: ${err.message}`));
@@ -531,6 +536,54 @@ async function checkStatus() {
     }
 }
 
+async function showReplay(args: string[]) {
+    const sessionId = args[0];
+    const limitArg = args[1];
+    const limit = limitArg ? Number(limitArg) : undefined;
+    if (!sessionId) {
+        console.error(pc.red("Usage: npx termyte replay <session-id> [limit]"));
+        process.exit(1);
+    }
+    if (limitArg && Number.isNaN(limit)) {
+        console.error(pc.red("Limit must be a number."));
+        process.exit(1);
+    }
+    const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8")) : null;
+    if (!config) {
+        console.error(pc.red("Termyte not initialized. Run 'npx termyte init' first."));
+        process.exit(1);
+    }
+
+    try {
+        const replay = await kernel.cloudClient.getReplay(sessionId, limit);
+        console.log(pc.bold(pc.cyan(`\n↩ Termyte Replay [${sessionId}]\n`)));
+        console.log(`  Replayable: ${replay.replayable ? pc.green("Yes") : pc.yellow("No")}`);
+        console.log(`  Chain:      ${replay.chain_valid ? pc.green("Valid") : pc.red("Invalid")}`);
+        if (replay.current_state?.last_verdict) {
+            console.log(`  Last verdict: ${pc.cyan(replay.current_state.last_verdict)}`);
+        }
+        if (replay.current_state?.last_reason) {
+            console.log(`  Last reason:  ${pc.gray(truncate(replay.current_state.last_reason, 180))}`);
+        }
+        const events = Array.isArray(replay.events) ? replay.events : [];
+        console.log(`  Events:     ${pc.cyan(String(events.length))}`);
+        events.forEach((event: any) => {
+            const verdictColor = event.verdict === "BLOCK" ? pc.red : (event.verdict === "ALLOW" ? pc.green : pc.yellow);
+            const phase = event.event_phase || "unknown";
+            const time = event.created_at ? new Date(event.created_at).toLocaleTimeString() : "";
+            const header = `${verdictColor(`[${event.verdict}]`)} ${pc.gray(time)} ${pc.bold(phase)} ${pc.gray(event.tool_name || event.action_type || "")}`;
+            console.log(header.trim());
+            if (event.reason) console.log(`    Reason: ${truncate(event.reason, 180)}`);
+            if (event.stdout_summary) console.log(pc.dim(`    Stdout: ${truncate(event.stdout_summary, 180)}`));
+            if (event.stderr_summary) console.log(pc.red(pc.dim(`    Stderr: ${truncate(event.stderr_summary, 180)}`)));
+        });
+        process.exit(0);
+    } catch (err: any) {
+        console.error(pc.red(`Failed to fetch replay: ${err.message}`));
+        process.exit(1);
+    }
+}
+
 async function runPolicyCommand(args: string[]) {
     const sub = args[0];
     const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8")) : null;
@@ -605,6 +658,7 @@ ${pc.bold("Termyte — Terminal Governance for Coding Agents")}
 Usage:
   npx termyte init        Setup local device-id and auto-configure agent
   npx termyte log         Show recent governance events
+  npx termyte replay <session-id> [limit]  Show replayable session history
   npx termyte status      Check connection to the sidecar
   npx termyte             Start MCP Server (Standard IO)
 
