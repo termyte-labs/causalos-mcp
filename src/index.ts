@@ -98,6 +98,36 @@ function tomlString(value: string | undefined): string {
     return JSON.stringify(value || "");
 }
 
+function pickInitAgent(agents: any[], detected: any[]): any {
+    const hintedKey = (process.env.TERMYTE_AGENT || "").trim().toLowerCase();
+    if (hintedKey) {
+        const hinted = agents.find((agent) =>
+            agent.key === hintedKey || agent.name.toLowerCase().includes(hintedKey)
+        );
+        if (hinted) {
+            return hinted;
+        }
+    }
+
+    const pool = detected.length > 0 ? detected : agents;
+    if (pool.length === 1) {
+        return pool[0];
+    }
+
+    console.log(pc.bold("Select the agent to configure:"));
+    pool.forEach((agent, index) => {
+        const origin = detected.includes(agent) ? "detected" : "available";
+        console.log(`  ${index + 1}. ${agent.name} (${origin})`);
+        console.log(`     ${agent.paths.join(", ")}`);
+    });
+
+    const choice = Number(syncPrompt(`Choose an agent [1-${pool.length}]: `));
+    if (!Number.isInteger(choice) || choice < 1 || choice > pool.length) {
+        throw new Error("Invalid agent selection.");
+    }
+    return pool[choice - 1];
+}
+
 function truncate(value: string, max = 180): string {
     const compact = value.replace(/\s+/g, " ").trim();
     return compact.length > max ? `${compact.slice(0, max - 1)}…` : compact;
@@ -252,20 +282,7 @@ async function init() {
     const agents = getSupportedAgents(home);
 
     const detected = agents.filter(a => a.paths.some(p => fs.existsSync(p)));
-    let selectedAgent: any = null;
-
-    if (detected.length > 1) {
-        selectedAgent = detected[0];
-    } else if (detected.length === 1) {
-        selectedAgent = detected[0];
-    } else {
-        selectedAgent = agents[0];
-    }
-
-    if (!selectedAgent) {
-        console.error(pc.red("Invalid selection."));
-        process.exit(1);
-    }
+    const selectedAgent = pickInitAgent(agents, detected);
 
     // 2. Device ID Management
     if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true });
