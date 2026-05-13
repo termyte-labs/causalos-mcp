@@ -48,6 +48,11 @@ if (arg === "init") {
         console.error(pc.red(`Verification failed: ${err.message}`));
         process.exit(1);
     });
+} else if (arg === "admin") {
+    showAdminOverview().catch(err => {
+        console.error(pc.red(`Admin command failed: ${err.message}`));
+        process.exit(1);
+    });
 } else if (arg === "policy") {
     runPolicyCommand(process.argv.slice(3)).catch(err => {
         console.error(pc.red(`Policy command failed: ${err.message}`));
@@ -555,6 +560,54 @@ async function showIntegrations() {
     process.exit(selected?.verified && apiStatus ? 0 : 1);
 }
 
+async function showAdminOverview() {
+    const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8")) : null;
+    if (!config) {
+        console.error(pc.red("Termyte not initialized. Run 'npx termyte init' first."));
+        process.exit(1);
+    }
+
+    const overview = await kernel.cloudClient.getAdminOverview();
+    console.log(`\n${pc.bold("Termyte Admin Overview")}`);
+    console.log(`  Org:      ${pc.cyan(overview.org_id)}`);
+    console.log(`  Users:    ${pc.cyan(String(overview.user_count ?? 0))}`);
+    console.log(`  Devices:  ${pc.cyan(String(overview.device_count ?? 0))}`);
+    console.log(`  Sessions: ${pc.cyan(String(overview.active_sessions ?? 0))} active / ${pc.cyan(String(overview.stored_sessions ?? 0))} stored`);
+    console.log(`  Policies: ${pc.cyan(String(overview.policy_count ?? 0))}`);
+    console.log(`  Audits:   ${pc.cyan(String(overview.audit_count ?? 0))}`);
+
+    const sections = [
+        ["Policies", overview.policies],
+        ["Devices", overview.devices],
+        ["Sessions", overview.sessions],
+        ["Audits", overview.audits],
+    ] as const;
+
+    for (const [title, items] of sections) {
+        console.log(`\n${pc.bold(title)}`);
+        if (!Array.isArray(items) || items.length === 0) {
+            console.log(`  ${pc.gray("None")}`);
+            continue;
+        }
+        items.forEach((item: any) => {
+            if (title === "Policies") {
+                console.log(`  ${pc.cyan(item.name)} ${pc.gray(item.rule_type)} ${pc.yellow(item.action)} ${pc.gray(`#${item.priority}`)} ${item.enabled ? pc.green("enabled") : pc.red("disabled")}`);
+                return;
+            }
+            if (title === "Devices") {
+                console.log(`  ${pc.cyan(item.device_id)} ${pc.gray(item.agent || "unknown")} ${pc.gray(item.install_label || "")}`);
+                return;
+            }
+            if (title === "Sessions") {
+                console.log(`  ${pc.cyan(item.session_id)} ${pc.gray(item.agent || "unknown")} ${pc.gray(item.status || "")}`);
+                return;
+            }
+            console.log(`  ${pc.cyan(item.session_id)} ${pc.gray(item.event_phase)} ${pc.yellow(item.action_type)} ${pc.gray(item.verdict)} ${pc.gray(item.created_at)}`);
+        });
+    }
+    process.exit(0);
+}
+
 async function showReplay(args: string[]) {
     const sessionId = args[0];
     const limitArg = args[1];
@@ -679,6 +732,7 @@ Usage:
   npx termyte log         Show recent governance events
   npx termyte replay <session-id> [limit]  Show replayable session history
   npx termyte verify      Verify Claude, Codex, and Cursor integrations
+  npx termyte admin       Show org users, devices, sessions, policies, and audits
   npx termyte status      Check connection to the sidecar
   npx termyte             Start MCP Server (Standard IO)
 

@@ -204,4 +204,8 @@ export class CloudKernelClient {
         }
         return this.request('GET', `/v1/governance/replay?${params.toString()}`);
     }
+
+    async getAdminOverview() {
+        return this.request('GET', '/v1/admin/overview');
+    }
 }

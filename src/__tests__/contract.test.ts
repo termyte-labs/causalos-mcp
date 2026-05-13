@@ -41,6 +41,20 @@ describe("Cloud contract", () => {
                         current_state: { last_verdict: "ALLOW" },
                         events: [],
                     }));
+                } else if ((req.url || "").startsWith("/v1/admin/overview")) {
+                    res.end(JSON.stringify({
+                        org_id: "test-org-id",
+                        user_count: 2,
+                        device_count: 3,
+                        active_sessions: 1,
+                        stored_sessions: 4,
+                        policy_count: 5,
+                        audit_count: 6,
+                        policies: [],
+                        devices: [],
+                        sessions: [],
+                        audits: [],
+                    }));
                 } else {
                     res.end(JSON.stringify({ ok: true }));
                 }
@@ -163,6 +177,24 @@ describe("Cloud contract", () => {
             session_id: "session-42",
             replayable: true,
             chain_valid: true,
+        });
+    });
+
+    it("getAdminOverview calls /v1/admin/overview with auth headers", async () => {
+        const client = new CloudKernelClient();
+        const overview = await client.getAdminOverview();
+
+        expect(requests[0]?.url).toBe("/v1/admin/overview");
+        expect(requests[0]?.method).toBe("GET");
+        expect(requests[0]?.headers["x-termyte-auth-token"]).toBe("test-auth-token");
+        expect(overview).toMatchObject({
+            org_id: "test-org-id",
+            user_count: 2,
+            device_count: 3,
+            active_sessions: 1,
+            stored_sessions: 4,
+            policy_count: 5,
+            audit_count: 6,
         });
     });
 });
