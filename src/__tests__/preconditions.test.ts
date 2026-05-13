@@ -59,4 +59,21 @@ describe("precondition collectors", () => {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("captures protected git push evidence", async () => {
+    const facts = await collectPreconditions({
+      payload: {
+        command: "git",
+        args: ["push", "origin", "HEAD:main", "--force-with-lease"],
+      },
+    });
+
+    expect(facts.git).toMatchObject({
+      push_target_branch: "main",
+      push_target_ref: "HEAD:main",
+      push_target_remote: "origin",
+      push_target_protected: true,
+      force_with_lease: true,
+    });
+  });
 });

@@ -84,13 +84,31 @@ async function collectGit(command: string, args: string[], cwd?: string) {
   const cmd = `${command} ${args.join(" ")}`.toLowerCase();
   if (!cmd.includes("git ")) return undefined;
   const base = cwd || process.cwd();
+  const pushIndex = args.findIndex((arg) => arg.toLowerCase() === "push");
   const branch = await tryExec("git", ["branch", "--show-current"], base);
   const status = await tryExec("git", ["status", "--porcelain"], base);
+  const pushArgs = pushIndex >= 0 ? args.slice(pushIndex + 1) : [];
+  const pushFlags = pushArgs.filter((arg) => arg.startsWith("-")).map((arg) => arg.toLowerCase());
+  const pushPositionals = pushArgs.filter((arg) => !arg.startsWith("-"));
+  const remote = pushPositionals[0] || "";
+  const refspecs = pushPositionals.slice(1);
+  const targetRef = refspecs[0] || "";
+  const targetBranch = targetRef.includes(":") ? targetRef.split(":").pop() || "" : targetRef;
+  const protectedTargetBranch = ["main", "master", "production", "prod"].includes(
+    (targetBranch || branch || "").toLowerCase()
+  );
   return {
     branch: branch || "unknown",
     protected_branch: ["main", "master", "production", "prod"].includes((branch || "").toLowerCase()),
+    push_target_branch: targetBranch || branch || "",
+    push_target_ref: targetRef,
+    push_target_remote: remote,
+    push_target_protected: protectedTargetBranch,
+    delete_ref: pushFlags.includes("--delete") || targetRef.startsWith(":"),
+    mirror: pushFlags.includes("--mirror"),
     dirty: status.length > 0,
-    force: cmd.includes("--force") || /\s-f(\s|$)/.test(cmd),
+    force: cmd.includes("--force") || pushFlags.includes("-f") || /\s-f(\s|$)/.test(cmd),
+    force_with_lease: cmd.includes("--force-with-lease") || pushFlags.includes("--force-with-lease"),
     reset_hard: cmd.includes("reset --hard"),
     clean_force: cmd.includes("clean -fd"),
     rebase_interactive: cmd.includes("rebase -i"),
