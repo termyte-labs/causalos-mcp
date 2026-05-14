@@ -93,8 +93,16 @@ export class CloudKernelClient {
                             resolve(parsed);
                         }
                     } catch (e) {
-                        if (res.statusCode === 204) resolve({});
-                        else reject(new Error('Invalid JSON response'));
+                        if (res.statusCode === 204) {
+                            resolve({});
+                            return;
+                        }
+                        if (res.statusCode && res.statusCode >= 400) {
+                            const snippet = data.trim().slice(0, 240);
+                            reject(new Error(`HTTP ${res.statusCode}${snippet ? `: ${snippet}` : ''}`));
+                            return;
+                        }
+                        reject(new Error(`Invalid JSON response${data.trim() ? `: ${data.trim().slice(0, 240)}` : ''}`));
                     }
                 });
             });

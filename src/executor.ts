@@ -92,10 +92,11 @@ export async function nativeExec(rawCommand: string, timeoutMs = 30_000): Promis
     });
     return { stdout, stderr, exit_code: 0, duration_ms: Date.now() - start };
   } catch (err: any) {
+    const exitCode = typeof err.code === "number" ? err.code : 1;
     return {
       stdout: err.stdout ?? "",
       stderr: err.stderr ?? err.message,
-      exit_code: err.code ?? 1,
+      exit_code: exitCode,
       duration_ms: Date.now() - start
     };
   }

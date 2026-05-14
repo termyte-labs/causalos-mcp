@@ -1,14 +1,12 @@
 # Termyte MCP
 
-Termyte is an MCP-first runtime action-memory layer for coding agents.
+Termyte is a minimum runtime safety layer for coding agents.
 
-It gives agents three tools:
+By default it gives agents one tool:
 
-- `context_build`: call before a task to retrieve prior failures, constraints, and safer instructions.
-- `guard_action`: call before risky non-shell actions such as file deletion, git mutation, database mutation, package publishing, network execution, or secret access.
 - `execute`: run shell commands through Termyte governance and failure-memory checks.
 
-Termyte does not forcibly intercept native agent tools through MCP. Native tools are governed only when the host agent follows the installed Termyte protocol.
+Advanced `context_build` and `guard_action` tools are internal by default and can be exposed with `TERMYTE_EXPOSE_ADVANCED_TOOLS=1` for custom integrations.
 
 ## Why It Exists
 
@@ -19,7 +17,7 @@ Coding agents fail in two expensive ways:
 
 Termyte blocks clearly destructive actions, warns on similar prior failures, redacts sensitive data, and stores sanitized runtime memory in the cloud so every authorized agent in the same organization can benefit from prior outcomes.
 
-The cloud runtime also persists durable session state, so a later `context_build` can immediately surface the last failure or warning from the same session even after a restart.
+The cloud runtime also persists durable session state, so failure memory can surface the last relevant failure or warning without making the agent run a separate context step.
 
 ## Install
 
@@ -37,11 +35,11 @@ Free installs are limited to one active agent session. Team and enterprise organ
 
 Agents should follow this workflow:
 
-1. Call `context_build` before starting a coding task.
-2. Call `guard_action` before risky non-shell actions.
-3. Use `execute` for shell commands.
-4. Treat `WARN` as proceed-with-caution and keep the warning in context.
-5. Treat `BLOCK` as do-not-proceed and explain the safer alternative.
+1. Use `execute` for shell commands.
+2. Treat `WARN` as proceed-with-caution and keep the warning in context.
+3. Treat `BLOCK` as do-not-proceed and explain the safer alternative.
+
+Safe reads, tests, builds, and normal local edits are allowed. Sensitive surfaces warn. Irreversible actions such as secret access, destructive deletes, protected git mutation, package publishing, production database mutation, and production deploys block.
 
 ## Verdicts
 

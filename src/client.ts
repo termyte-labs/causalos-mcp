@@ -15,10 +15,9 @@ export class KernelClient {
     try {
       return await this.cloudClient.prepareToolCall(session_id, tool_name, payload);
     } catch (err: any) {
-      console.error(`[KernelClient] Governance failure: ${err.message}. Failing closed.`);
       return {
           verdict: "BLOCK",
-          reason: "Governance runtime unreachable. Action blocked for safety.",
+          reason: `Cloud governance unavailable: ${err.message}.`,
           source: "failsafe"
       };
     }
@@ -83,7 +82,6 @@ export class KernelClient {
         return await this.cloudClient.commitToolCall(params);
     } catch (err) {
         // Log locally if cloud is down, but don't crash
-        console.error(`[KernelClient] Failed to commit outcome: ${err}`);
         return { status: "local_only" };
     }
   }

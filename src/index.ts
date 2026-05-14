@@ -13,14 +13,15 @@ import * as http from "http";
 import { execFile } from "child_process";
 import { v4 as uuidv4 } from "uuid";
 import { getSupportedAgents, inspectIntegration, verifySupportedIntegrations } from "./integrations.js";
+import { runGovernedCommand } from "./governed-exec.js";
 
 const CONFIG_DIR = path.join(os.homedir(), ".termyte");
 const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 const TERMYTE_PROTOCOL = `Termyte protocol:
-- Before starting a coding task, call context_build with the task and workspace context.
-- Before risky non-shell actions, call guard_action.
-- Use execute for shell commands when available.
-- If Termyte returns WARN, proceed only with the warning instructions in context.
+- Use the execute tool for shell commands when available.
+- Termyte automatically evaluates command risk, policy, audit, and failure memory.
+- Safe reads, tests, builds, and normal edits should continue without interruption.
+- If Termyte returns WARN, proceed with the warning instructions in context.
 - If Termyte returns BLOCK, do not perform the action.`;
 
 // ─── CLI Command Dispatcher ───────────────────────────────────────────────────
@@ -29,6 +30,11 @@ const arg = process.argv[2];
 if (arg === "init") {
     init().catch(err => {
         console.error(pc.red(`Init failed: ${err.message}`));
+        process.exit(1);
+    });
+} else if (arg === "exec" || arg === "execute") {
+    runExecCommand(process.argv.slice(3)).catch(err => {
+        console.error(pc.red(`Exec failed: ${err.message}`));
         process.exit(1);
     });
 } else if (arg === "log" || arg === "logs") {
@@ -231,6 +237,44 @@ function runtimeHeaders(config: any) {
         ...(config.org_id ? { "x-termyte-org-id": config.org_id } : {}),
         ...(config.agent ? { "x-termyte-agent": config.agent } : {})
     };
+}
+
+async function runExecCommand(args: string[]) {
+    const cwdFlagIndex = args.findIndex((value) => value === "--cwd");
+    let cwd: string | undefined;
+    if (cwdFlagIndex >= 0) {
+        cwd = args[cwdFlagIndex + 1];
+        args.splice(cwdFlagIndex, 2);
+    }
+    if (args[0] === "--") args.shift();
+    const command = args.join(" ").trim();
+    if (!command) {
+        console.error(pc.red("Usage: npx termyte exec [--cwd <path>] -- <command>"));
+        process.exit(1);
+    }
+
+    const result = await runGovernedCommand({
+        command,
+        cwd,
+        session_id: process.env.TERMYTE_SESSION_ID || uuidv4(),
+    });
+
+    const label = result.decision === "BLOCK"
+        ? pc.red("BLOCK")
+        : result.decision === "WARN"
+            ? pc.yellow("WARN")
+            : pc.green("ALLOW");
+    console.error(`${label} ${pc.gray(result.risk.risk_class)} - ${result.reason}`);
+    if (result.warning) {
+        console.error(pc.yellow(`Warning: ${result.warning}`));
+    }
+    if (result.alternative && result.decision === "BLOCK") {
+        console.error(pc.gray(`Alternative: ${result.alternative}`));
+    }
+
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
+    process.exit(result.exit_code);
 }
 
 async function authenticateDevice(termyteConfig: any, selectedAgent: any) {
@@ -538,6 +582,9 @@ async function checkStatus() {
         process.exit(0);
     } catch (err: any) {
         console.log(`  API:       ${pc.red("Offline")}`);
+        if (err?.message) {
+            console.log(`  Reason:    ${pc.red(err.message)}`);
+        }
         console.log(`  Governed:  ${pc.red("Unavailable")}`);
         process.exit(1);
     }
@@ -772,6 +819,7 @@ ${pc.bold("Termyte — Terminal Governance for Coding Agents")}
 
 Usage:
   npx termyte init        Setup local device-id and auto-configure agent
+  npx termyte exec -- <command>  Run a command through MVP governance
   npx termyte log         Show recent governance events
   npx termyte replay <session-id> [limit]  Show replayable session history
   npx termyte verify      Verify Claude, Codex, and Cursor integrations
@@ -781,9 +829,10 @@ Usage:
   npx termyte             Start MCP Server (Standard IO)
 
 Governance:
-  Termyte provides context_build, guard_action, and execute tools for
-  governed agent workflows. Native tools are governed only when the agent
-  follows the installed Termyte protocol.
+  Termyte exposes one default execute tool. Safe reads, tests, builds, and
+  normal edits continue; sensitive surfaces warn; irreversible actions block.
+  Advanced context_build and guard_action tools are internal unless explicitly
+  enabled with TERMYTE_EXPOSE_ADVANCED_TOOLS=1.
 `);
     process.exit(0);
 }
@@ -797,6 +846,7 @@ async function startMcpServer() {
 
     let currentSessionId = uuidv4(); // One session ID per MCP server process startup
 
+    if (process.env.TERMYTE_EXPOSE_ADVANCED_TOOLS === "1") {
     server.tool(
         "context_build",
         "Build Termyte context before starting a coding task.",
@@ -860,6 +910,7 @@ async function startMcpServer() {
             };
         }
     );
+    }
 
     server.tool(
         "execute",
@@ -870,6 +921,30 @@ async function startMcpServer() {
             cwd: z.string().optional(),
         },
         async ({ command, args, cwd }: any) => {
+            const mvpCommand = args.length > 0 ? `${command} ${args.map((a: string) => `"${a.replace(/"/g, '\\"')}"`).join(" ")}` : command;
+            const mvpResult = await runGovernedCommand({
+                command: mvpCommand,
+                cwd,
+                session_id: currentSessionId,
+            });
+            if (mvpResult.decision === "BLOCK") {
+                return {
+                    content: [{
+                        type: "text",
+                        text: `Action blocked by Termyte.\nReason: ${mvpResult.reason}\nAlternative: ${mvpResult.alternative || "Choose a safer command."}`
+                    }],
+                    isError: true
+                };
+            }
+            const mvpWarning = mvpResult.warning
+                ? `Termyte warning: ${mvpResult.warning}\nAlternative: ${mvpResult.alternative || "Keep the change scoped and verify the result."}\n\n`
+                : "";
+            const mvpOutput = (mvpResult.stdout + "\n" + mvpResult.stderr).trim();
+            return {
+                content: [{ type: "text", text: mvpWarning + (mvpOutput || "Command completed with no output.") }],
+                isError: mvpResult.exit_code !== 0
+            };
+
             const action_payload = { command, args, cwd };
             const session_id = currentSessionId;
 

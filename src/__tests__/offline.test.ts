@@ -11,11 +11,11 @@ describe("Offline Resilience", () => {
         vi.spyOn(client.cloudClient, 'commitToolCall').mockRejectedValue(new Error("Network Down"));
     });
 
-    it("should implement fail-closed in KernelClient for prepareToolCall", async () => {
-        // Based on the current client.ts implementation, it fails closed (BLOCK)
+    it("should mark cloud prepare failures as local failsafe blocks", async () => {
         const verdict = await client.prepareToolCall("s1", "execute", { command: "ls" });
         expect(verdict.verdict).toBe("BLOCK");
-        expect(verdict.reason).toContain("Governance runtime unreachable");
+        expect(verdict.reason).toContain("Cloud governance unavailable");
+        expect(verdict.source).toBe("failsafe");
     });
 
     it("should handle failed commit gracefully", async () => {
