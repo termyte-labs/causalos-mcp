@@ -53,7 +53,8 @@ export function classifyCommandRisk(command: string): MvpRiskDecision {
       /\brm\s+(-[a-z]*r[a-z]*f|-rf|-fr)\b/,
       /\brmdir\s+\/s\b/,
       /\bdel\s+\/[fqs]+\b/,
-      /\bremove-item\b.*\b-recurse\b/,
+      /remove-item.*-recurse/,
+      /remove-item.*-force/,
       /\bgit\s+clean\b.*\b-f\b/,
     ])
   ) {
@@ -67,9 +68,9 @@ export function classifyCommandRisk(command: string): MvpRiskDecision {
 
   if (
     hasAny(normalized, [
-      /\bgit\s+push\b.*(--force|-f)\b/,
-      /\bgit\s+push\b.*\b(main|master)\b/,
-      /\bgit\s+push\b.*(:refs\/|--delete)/,
+      /\bgit\b.*\bpush\b.*(--force|-f)\b/,
+      /\bgit\b.*\bpush\b.*\b(main|master)\b/,
+      /\bgit\b.*\bpush\b.*(:refs\/|--delete)/,
       /\bgit\s+reset\s+--hard\b/,
       /\bgit\s+rebase\s+-i\b.*\b(main|master)\b/,
     ])

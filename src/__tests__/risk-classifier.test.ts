@@ -35,7 +35,10 @@ describe("MVP risk classifier", () => {
   it("blocks only irreversible, privileged, or externally visible actions", () => {
     const cases = [
       "rm -rf src",
+      "Remove-Item -Recurse -Force src",
+      "powershell -Command Remove-Item src -Recurse -Force",
       "git push --force origin main",
+      "git -c push.default=current push --force origin main",
       "cat .env.production",
       "npm publish",
       "docker push ghcr.io/acme/app:latest",

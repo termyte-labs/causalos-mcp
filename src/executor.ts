@@ -68,6 +68,11 @@ export function resolveWindowsVerb(verb: string): string {
   return verb;
 }
 
+function quoteCmdArg(value: string): string {
+  if (!/[\s"&|<>^]/.test(value)) return value;
+  return `"${value.replace(/"/g, '\\"')}"`;
+}
+
 /**
  * Execute a command natively after it has passed Termyte Governance.
  * Uses execFile (not exec) to prevent shell injection at the OS level.
@@ -81,10 +86,15 @@ export async function nativeExec(rawCommand: string, timeoutMs = 30_000): Promis
   const rawVerb = rawVerbToken.replace(/^.*[\\\/]/, "");
   const verb = resolveWindowsVerb(rawVerb);
   const args = tokens.slice(1);
+  const isWindowsBatch = process.platform === "win32" && verb.toLowerCase().endsWith(".cmd");
+  const execVerb = isWindowsBatch ? (process.env.ComSpec || "cmd.exe") : verb;
+  const execArgs = isWindowsBatch
+    ? ["/d", "/s", "/c", [verb, ...args.map(quoteCmdArg)].join(" ")]
+    : args;
 
   const start = Date.now();
   try {
-    const { stdout, stderr } = await execFileAsync(verb, args, {
+    const { stdout, stderr } = await execFileAsync(execVerb, execArgs, {
       timeout: timeoutMs,
       maxBuffer: 10 * 1024 * 1024, // 10 MB max output
       windowsHide: true,

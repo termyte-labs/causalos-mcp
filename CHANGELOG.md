@@ -17,7 +17,7 @@ All notable changes to the Termyte project will be documented in this file.
 - **Improved Redaction**: Sanitizer now redacts sensitive info across all new audit fields.
 - **Database Refactor**: Decoupled SQL migrations from the runtime for better manual control and production stability.
 
-## [1.1.0] - 2026-05-08
+## [0.1.0] - 2026-05-08
 
 ### 🛡️ Termyte Production Release & Rebranding
 - **Official Rebranding**: Fully transitioned project to **Termyte**.
@@ -26,7 +26,7 @@ All notable changes to the Termyte project will be documented in this file.
 - **Safety Memory**: Integrated "Failure Memory" to prevent agents from repeating stochastic hallucinations.
 - **Protocol Compliance**: Established `TERMYTE_PROTOCOL.md` as the source of truth for agent safety instructions.
 
-## [1.0.0] - 2026-05-04
+## [0.1.0] - 2026-05-04
 
 ### Breaking
 - Unified governance verdict policy across MCP + cloud-runtime:
